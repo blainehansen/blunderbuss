@@ -1,8 +1,82 @@
+use anyhow::Context;
 use serde_json::json;
 
 type JsonResult = Result<serde_json::Value, String>;
-// TODO make this configurable and more reasonable
-const MAX_STEPS: usize = 20;
+const DEFAULT_MAXTURNS: usize = 20;
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct Config {
+	default_model: Option<String>,
+	default_maxturns: Option<usize>,
+	tools: Option<Vec<String>>,
+}
+
+// https://github.com/BurntSushi/ripgrep/tree/master/crates/globset
+
+async fn try_klungo_config() -> anyhow::Result<Config> {
+	let klungo_config_path = std::env::home_dir().unwrap_or("~/".into()).join(".klungo.config.yml");
+	if !tokio::fs::try_exists(&klungo_config_path).await.unwrap_or(false) {
+		return Ok(Config::default())
+	}
+
+	let file_contents = tokio::fs::read_to_string(klungo_config_path).await
+		.context("wasn't able to read .klungo.config.yml even though it exists?")?;
+
+	yaml_serde::from_str(&file_contents)
+		.context("wasn't able to parse .klungo.config.yml")
+}
+
+fn get_text_command_model(instructions: &str) -> Option<String> {
+	// TODO could probably have a more precise regex,but this does work
+	let regex = regex::Regex::new(r"/model\[([^\n\]]+)\]").unwrap();
+	let captures = regex.captures(&instructions)?;
+	captures.get(1).map(|m| m.as_str().to_string())
+}
+
+fn get_text_command_maxturns(instructions: &str) -> Option<usize> {
+	let regex = regex::Regex::new(r"/maxturns\[([1-9][0-9]+)\]").unwrap();
+	let captures = regex.captures(&instructions)?;
+	captures.get(1).and_then(|m| {
+		// TODO should handle this error better
+		m.as_str().parse().ok()
+	})
+}
+
+fn get_text_command_check(instructions: &str) -> Option<String> {
+	let regex = regex::Regex::new(r"/check\[([^\n\]]+)\]").unwrap();
+	let captures = regex.captures(&instructions)?;
+	captures.get(1).map(|m| m.as_str().to_string())
+}
+
+
+#[derive(Debug, serde::Deserialize)]
+struct ShellCommandArgs {
+	command_suffix: Option<String>,
+}
+
+fn tool_general_shell(shell_prefix: &str) -> genai::chat::Tool {
+	genai::chat::Tool::new(shell_prefix)
+		.with_description(format!("run the {shell_prefix} shell command, with possible extra arguments/text appended"))
+		.with_schema(json!({
+			"type": "object",
+			"properties": {
+				"command_suffix": {
+					"type": "string",
+					"description": format!("the extra arguments/text to append to {shell_prefix}. this will be placed immediately after, so include an initial space if needed"),
+				 }
+			},
+		}))
+}
+
+fn get_text_command_tools(instructions: &str) -> Vec<genai::chat::Tool> {
+	let regex = regex::Regex::new(r"/maxturns\[([1-9][0-9]+)\]").unwrap();
+
+	regex.captures_iter(&instructions).flat_map(|captures| {
+		captures.get(1)
+			// .or_else(|| { eprintln!(""); None })
+			.map(|m| tool_general_shell(m.as_str()))
+	}).collect()
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -10,36 +84,45 @@ async fn main() -> anyhow::Result<()> {
 	// 	.with_env_filter(EnvFilter::new("genai=debug"))
 	// 	// .with_max_level(tracing::Level::DEBUG) // To enable all sub-library tracing
 	// 	.init();
-	let question = tokio::fs::read_to_string("klungo.local.md").await?;
 
-	// let re = regex::Regex::new(r"/check\[([^\n\]]+)\]").unwrap();
-	// if let Some(caps) = re.captures(&question) {
-	// 	let full_match = caps.get(0).map(|m| m.as_str());
-	// 	let check = caps.get(1).map(|m| m.as_str());
+	let Config { default_model, default_maxturns, tools: default_tools } = try_klungo_config().await?;
+	let instructions = tokio::fs::read_to_string("klungo.local.md").await
+		// TODO allow piping stdin at some point
+		.map_err(|e| anyhow::anyhow!("couldn't read the klungo.local.md file, which is the whole way klungo works!: {e}"))?;
 
-	// 	println!("Full match: {:?}", full_match);
-	// 	println!("Check: {:?}", check);
-	// }
+	let model = get_text_command_model(&instructions)
+		.or(default_model)
+		.ok_or_else(|| anyhow::anyhow!("you don't have a model specified! you have to either provide one using /model[<model qualifier>] in klungo.local.md, or using `default_model` in ~/.klungo.config.yml"))?;
 
+	let maxturns = get_text_command_maxturns(&instructions)
+		.or(default_maxturns)
+		.unwrap_or(DEFAULT_MAXTURNS);
 
-	let client = genai::Client::builder().with_model_mapper_fn(|_model_iden| {
-		// Ok(genai::ModelIden::from_static(genai::adapter::AdapterKind::Gemini, "gemma-4-31b-it"))
-		Ok(genai::ModelIden::from_static(genai::adapter::AdapterKind::Gemini, "gemma-4-26b-a4b-it"))
-	}).build()?;
+	let check_command = get_text_command_check(&instructions);
 
-	let tools = vec![
+	let tools = [
 		// tool_tree(),
 		tool_grep(),
 		tool_read_file(),
 		tool_create_file(),
 		tool_write_chunk(),
-	];
+	].into_iter()
+		.chain(default_tools.unwrap_or_default().into_iter().map(|t| tool_general_shell(&t)))
+		.chain(get_text_command_tools(&instructions))
+		.collect::<Vec<_>>();
+
+	// let client = genai::Client::builder().with_model_mapper_fn(|_model_iden| {
+	// 	// Ok(genai::ModelIden::from_static(genai::adapter::AdapterKind::Gemini, "gemma-4-31b-it"))
+	// 	Ok(genai::ModelIden::from_static(genai::adapter::AdapterKind::Gemini, "gemma-4-26b-a4b-it"))
+	// }).build()?;
+
+	let client = genai::Client::new()?;
 
 	let mut chat_req = genai::chat::ChatRequest::default()
 		.with_system(include_str!("./system.md"))
 		.with_tools(tools);
 
-	chat_req = chat_req.append_message(genai::chat::ChatMessage::user(question));
+	chat_req = chat_req.append_message(genai::chat::ChatMessage::user(instructions));
 
 	// TODO at the beginning we push the basic "temp" git commit that's formatted in such a way that we can easily undo it
 	// https://itnext.io/multitask-like-a-pro-with-the-wip-commit-2f4d40ca0192
@@ -57,24 +140,17 @@ async fn main() -> anyhow::Result<()> {
 	//   fi
 	// }
 
-	// how to actually do this? we have two main loops
-	// one for the "are we happy" question, basically whether the configured or passed check command has passed
-	// and then the actual max steps
-	// probably has to just be a single while loop that increments the step and keeps track
-
-	// let check_command = "cargo check";
-
-	let mut step = 0;
+	let mut turn = 0;
 	loop {
-		if step >= MAX_STEPS {
-			println!("klungo failed to achieved its goal within the max steps of {MAX_STEPS}");
+		if turn >= maxturns {
+			println!("klungo failed to finish within the max steps of {maxturns}");
 			// TODO
 			break
 		}
 
-		// actually execute this step of the chat
+		// actually execute this turn of the chat
 		use backon::Retryable;
-		let chat_res = (|| async { client.exec_chat("", chat_req.clone(), None).await })
+		let chat_res = (|| async { client.exec_chat(&model, chat_req.clone(), None).await })
 			.retry(backon::ExponentialBuilder::default())
 			.when(genai_error_is_retryable)
 			.notify(|err, dur| {
@@ -82,7 +158,8 @@ async fn main() -> anyhow::Result<()> {
 			})
 			.await?;
 
-		// process all the tool calls in parallel
+		// TODO not a good idea to run them all in parallel, files can conflict etc
+		// just run them in sequence for now, you can do something fancy where you split it up by file or whatever later
 		let tool_responses = futures::future::join_all(
 			chat_res.tool_calls().into_iter().map(async |tool_call| {
 				let output = run_tool(&tool_call).await;
@@ -102,15 +179,17 @@ async fn main() -> anyhow::Result<()> {
 
 			break;
 		}
-		// otherwise append the tool responses
-		chat_req = chat_req.append_message(tool_responses);
+		else {
+			// otherwise append the tool responses
+			chat_req = chat_req.append_message(tool_responses);
+		}
 
-		step += 1;
+		turn += 1;
 	}
 
 	// chat_req.messages.into_iter()
 	let chat_json = serde_json::to_vec_pretty(&chat_req.messages)?;
-	tokio::fs::write("output.local.json", chat_json).await?;
+	tokio::fs::write("klungo.output.local.json", chat_json).await?;
 
 	Ok(())
 }
