@@ -15,8 +15,6 @@ struct Config {
 	tools: Option<Vec<String>>,
 }
 
-// https://github.com/BurntSushi/ripgrep/tree/master/crates/globset
-
 async fn try_klungo_config() -> anyhow::Result<Config> {
 	let klungo_config_path = std::env::home_dir().unwrap_or("~/".into()).join(".klungo.config.yml");
 	if !tokio::fs::try_exists(&klungo_config_path).await.unwrap_or(false) {
@@ -30,35 +28,37 @@ async fn try_klungo_config() -> anyhow::Result<Config> {
 		.context("wasn't able to parse .klungo.config.yml")
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-	// tracing_subscriber::fmt()
-	// 	.with_env_filter(EnvFilter::new("genai=debug"))
-	// 	// .with_max_level(tracing::Level::DEBUG) // To enable all sub-library tracing
-	// 	.init();
+#[derive(Debug)]
+struct Params {
+	model: String,
+	maxturns: usize,
+	other_tools: HashMap<String, genai::chat::Tool>,
+	check_command: Option<String>,
+}
 
+async fn create_new_chat() -> anyhow::Result<(Params, genai::chat::ChatRequest)> {
 	let Config { default_model, default_maxturns, tools: default_tools } = try_klungo_config().await?;
 	let instructions = tokio::fs::read_to_string("klungo.local.md").await
 		// TODO allow piping stdin at some point
 		.map_err(|e| anyhow::anyhow!("couldn't read the klungo.local.md file, which is the whole way klungo works!: {e}"))?;
 
-	let parser::Instructions {
-		tools: instruction_tools, model, allows, disallows, maxturns, text: instruction_text, check_command,
-	} = parser::parse_instructions(&instructions)
+	let (
+		parser::Params {
+			tools: instruction_tools, model, maxturns, allow: _, disallow: _, check: check_command,
+		},
+		text,
+	) = parser::parse_instructions(&instructions)
 		.map_err(|e| anyhow::anyhow!(e))?;
 
 	let model = model
 		.or(default_model)
-		.ok_or_else(|| anyhow::anyhow!("you don't have a model specified! you have to either provide one using /model[<model qualifier>] in klungo.local.md or `default_model` in ~/.klungo.config.yml"))?;
+		.ok_or_else(|| anyhow::anyhow!("you don't have a model specified! you have to either provide one using the `model` frontmatter param in klungo.local.md or `default_model` in ~/.klungo.config.yml"))?;
 
 	let maxturns = maxturns
 		.or(default_maxturns)
 		.unwrap_or(DEFAULT_MAXTURNS);
 
 	// TODO add allow and disallow
-
-	// let default_tools = default_tools.unwrap_or_default().into_iter().map(|t| tools::tool_general_shell(&t)).collect::<Vec<_>>();
-	// let instruction_tools = instruction_tools.unwrap_or_default().into_iter().map(|m| tools::tool_general_shell(m.as_str())).collect::<Vec<_>>();
 
 	let other_tools = default_tools.unwrap_or_default().into_iter().chain(instruction_tools.unwrap_or_default().into_iter())
 		.map(|m| tools::tool_general_shell(m.as_str())).collect::<Vec<_>>();
@@ -87,48 +87,42 @@ async fn main() -> anyhow::Result<()> {
 		println!("using check command {check_command}");
 	}
 
-	// let client = genai::Client::builder().with_model_mapper_fn(|_model_iden| {
-	// 	// Ok(genai::ModelIden::from_static(genai::adapter::AdapterKind::Gemini, "gemma-4-31b-it"))
-	// 	Ok(genai::ModelIden::from_static(genai::adapter::AdapterKind::Gemini, "gemma-4-26b-a4b-it"))
-	// }).build()?;
-
-	let client = genai::Client::new()?;
-
 	let mut chat_req = genai::chat::ChatRequest::default()
 		.with_system(include_str!("./system.md"))
 		.with_tools(all_tools);
 
-	chat_req = chat_req.append_message(genai::chat::ChatMessage::user(instruction_text));
+	chat_req = chat_req.append_message(genai::chat::ChatMessage::user(text));
 
-	// TODO at the beginning we push the basic "temp" git commit that's formatted in such a way that we can easily undo it
-	// https://itnext.io/multitask-like-a-pro-with-the-wip-commit-2f4d40ca0192
-	// alias gwip='git add -A; git rm $(git ls-files --deleted) 2> /dev/null; git commit --no-verify --no-gpg-sign --message "--wip-- [skip ci]"'
+	let instructions = Params { model, maxturns, other_tools, check_command };
 
-	// alias gunwip='git rev-list --max-count=1 --format="%s" HEAD | grep -q "\--wip--" && git reset HEAD~1'
+	Ok((instructions, chat_req))
+}
 
-	// # Similar to `gunwip` but recursive "Unwips" all recent `--wip--` commits not just the last one
-	// function gunwipall() {
-	//   local _commit=$(git log --grep='--wip--' --invert-grep --max-count=1 --format=format:%H)
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+	// tracing_subscriber::fmt()
+	// 	.with_env_filter(EnvFilter::new("genai=debug"))
+	// 	// .with_max_level(tracing::Level::DEBUG)
+	// 	.init();
 
-	//   # Check if a commit without "--wip--" was found and it's not the same as HEAD
-	//   if [[ "$_commit" != "$(git rev-parse HEAD)" ]]; then
-	//     git reset $_commit || return 1
-	//   fi
-	// }
+	let (mut p, mut chat_req) = create_new_chat().await?;
 
+	// we just use the out of the box genai behavior, and all its model/auth resolver magic
+	let client = genai::Client::new()?;
 	let mut turn = 0;
 	let mut ran_out_of_turns = false;
+	push_checkpoint_commit().await?;
 	loop {
-		if turn >= maxturns {
+		if turn >= p.maxturns {
 			ran_out_of_turns = true;
 			break
 		}
 
 		// execute this turn
 		use backon::Retryable;
-		let chat_res = (|| async { client.exec_chat(&model, chat_req.clone(), None).await })
+		let chat_res = (|| async { client.exec_chat(&p.model, chat_req.clone(), None).await })
 			.retry(backon::ExponentialBuilder::default())
-			.when(utils::genai_error_is_retryable)
+			.when(genai_error_is_retryable)
 			.notify(|err, dur| {
 				println!("retrying error {:?} after {:?}", err, dur);
 			})
@@ -138,8 +132,11 @@ async fn main() -> anyhow::Result<()> {
 
 		let tool_calls = content.tool_calls();
 		let mut tool_responses = Vec::with_capacity(tool_calls.len());
+		// we execute the tool calls sequentially for now to avoid possible headaches with them interfering
+		// something fancy in the future would be to divide up the tools by the things they could effect (files, whatever)
+		// however that's easier said than done, since the tools the user specifies could mess things up
 		for tool_call in tool_calls.into_iter() {
-			let output = tools::run_tool(&tool_call, check_command.as_deref(), &other_tools).await;
+			let output = tools::run_tool(&tool_call, p.check_command.as_deref(), &p.other_tools).await;
 
 			let tool_response = genai::chat::ToolResponse::from_tool_call(&tool_call, output.to_string());
 			tool_responses.push(tool_response);
@@ -158,7 +155,7 @@ async fn main() -> anyhow::Result<()> {
 		}
 		// there aren't any more calls (and therefore any more responses), the llm says its done
 		else {
-			if let Some(check_command) = &check_command {
+			if let Some(check_command) = &p.check_command {
 				println!("klungo says it's finished, running your check command {check_command}");
 				let output = tokio::process::Command::new("sh").arg("-c").arg(check_command)
 					.output().await.with_context(|| format!("wasn't able to call sh -c '{check_command}'"))?;
@@ -176,30 +173,48 @@ async fn main() -> anyhow::Result<()> {
 				println!("check command {check_command} succeeded!");
 			}
 
-			let options: Vec<&str> = vec!["looks good", "try again", "nope revert"];
+			const LOOKS_GOOD: &'static str = "looks good";
+			const NOPE_REVERT: &'static str = "nope revert";
+			const TRY_AGAIN_ANEW: &'static str = "try again (start new chat from klungo.local.md)";
+			const TRY_AGAIN_FROM_HERE: &'static str = "try again (continue this chat)";
+			let options: Vec<&str> = vec![LOOKS_GOOD, NOPE_REVERT, TRY_AGAIN_FROM_HERE];
+			let page_size = options.len();
 
 			let choice = inquire::Select::new("How's that?", options)
-				.with_page_size(3)
+				.with_page_size(page_size)
 				.without_help_message()
-				.prompt().context("there was some issue withe the inquire library?")?;
+				.prompt().context("there was some issue with the inquire library?")?;
 
 			match choice {
-				"looks good" => {
+				LOOKS_GOOD => {
 					// pop the temp git commit
+					soft_reset_checkpoint_commit().await?;
+					break;
 				},
-				"nope revert" => {
+				NOPE_REVERT => {
 					// revert and hard reset
-					// pop the temp git commit
+					hard_reset_checkpoint_commit().await?;
+					// stop trying, the user doesn't want to bother
+					break;
 				},
-				"try again" => {
-					// this should reread the instructions, right?
-					// ironically
+				TRY_AGAIN_ANEW => {
+					// this tries again and rereads klungo.local.md
+					hard_reset_checkpoint_commit().await?;
+					(p, chat_req) = create_new_chat().await?;
+					turn = 0;
+					continue;
+				},
+				TRY_AGAIN_FROM_HERE => {
+					// this tries again with the context we already have
+					hard_reset_checkpoint_commit().await?;
+					turn = 0;
+					chat_req = chat_req.append_message(genai::chat::ChatMessage::user(
+						"I'm unsatisfied with that attempt. everything has been reverted, try again",
+					));
+					continue;
 				},
 				unknown => { return Err(anyhow::anyhow!("how did you choose this? {unknown}")) }
 			}
-
-			// we end up here both if there isn't a check command or if the check command succeeded
-			break;
 		}
 	}
 
@@ -208,8 +223,43 @@ async fn main() -> anyhow::Result<()> {
 	tokio::fs::write("klungo.output.local.json", chat_json).await?;
 
 	if ran_out_of_turns {
-		return Err(anyhow::anyhow!("klungo failed to finish within the max steps of {maxturns}"))
+		return Err(anyhow::anyhow!("klungo failed to finish within the max turns: {}", p.maxturns))
 	}
 
 	Ok(())
+}
+
+// https://itnext.io/multitask-like-a-pro-with-the-wip-commit-2f4d40ca0192
+async fn push_checkpoint_commit() -> anyhow::Result<()> {
+	let output = tokio::process::Command::new("sh").arg("-c")
+		.arg("git add -A; git rm $(git ls-files --deleted) 2> /dev/null; git commit --no-verify --no-gpg-sign --message '--klungo-checkpoint--'")
+		.output().await?;
+
+	utils::demand_command_success(output, "failed to push the temporary git checkpoint commit")
+}
+async fn soft_reset_checkpoint_commit() -> anyhow::Result<()> {
+	let output = tokio::process::Command::new("sh").arg("-c")
+		.arg(r#"git rev-list --max-count=1 --format="%s" HEAD | grep -q "\--klungo-checkpoint--" && git reset HEAD~1"#)
+		.output().await?;
+
+	utils::demand_command_success(output, "failed to pop the temporary git checkpoint commit")
+}
+async fn hard_reset_checkpoint_commit() -> anyhow::Result<()> {
+	let output = tokio::process::Command::new("sh").arg("-c")
+		.arg(r#"git rev-list --max-count=1 --format="%s" HEAD | grep -q "\--klungo-checkpoint--" && git reset --hard HEAD~1 && git clean -fd"#)
+		.output().await?;
+
+	utils::demand_command_success(output, "failed to pop the temporary git checkpoint commit")
+}
+
+
+fn genai_error_is_retryable(e: &genai::Error) -> bool {
+	// e.headers()
+
+	if let Some(status) = e.status() {
+		return status.is_server_error()
+			|| status == http::StatusCode::TOO_MANY_REQUESTS
+			|| status == http::StatusCode::REQUEST_TIMEOUT
+	}
+	return false
 }

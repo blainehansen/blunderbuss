@@ -1,214 +1,146 @@
-use crate::utils::OptionExt;
-
 use nom::{
-	IResult, Parser, branch::alt, bytes::complete::{tag, take_until, take_while}, character::complete::anychar, combinator::{cut, map, map_res, rest, value}, error::context, multi::fold_many0, sequence::{delimited, pair, preceded, terminated},
+	IResult, Parser,
+	branch::alt,
+	bytes::complete::{tag, take_while},
+	combinator::{all_consuming, value},
+
 };
 use nom_language::error::{VerboseError, convert_error};
 
-#[derive(Debug, Default)]
-pub struct Instructions {
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Params {
 	pub tools: Option<Vec<String>>,
 	pub model: Option<String>,
-	pub allows: Option<Vec<PermGlob>>,
-	pub disallows: Option<Vec<PermGlob>>,
+	pub allow: Option<Vec<PermGlob>>,
+	pub disallow: Option<Vec<PermGlob>>,
 	pub maxturns: Option<usize>,
-	pub check_command: Option<String>,
-	pub text: String,
+	pub check: Option<String>,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum TextKind {
-	Model,
-	Tool,
-	Check,
-}
-
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct PermGlob {
 	pub kind: PermKind,
 	pub glob: String,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum PermKind {
 	Read,
 	Write,
 }
 
-fn newline(c: char) -> bool {
-	c == '\n' || c == '\r'
+pub fn parse_instructions(input: &str) -> anyhow::Result<(Params, String)> {
+	let mut matter = gray_matter::Matter::<gray_matter::engine::YAML>::new();
+	matter.excerpt_delimiter = None;
+
+	let parsed = matter.parse(input)?;
+	// TODO strip out the html comments?
+	Ok((parsed.data.unwrap_or_default(), parsed.content))
 }
 
-// anything except `]`, `\n`, `\r`
-fn body_char(c: char) -> bool {
-	c != ']' && c != '\n' && c != '\r'
+fn not_newline(c: char) -> bool {
+	c != '\n' && c != '\r'
 }
 
-fn html_comment(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
-	preceded(
-		tag("<!--"),
-		alt((
-			terminated(take_until("-->"), tag("-->")),
-			rest,
-		)),
-	).parse(input)
-}
-
-fn text_command(input: &str) -> IResult<&str, (TextKind, String), VerboseError<&str>> {
-	let (input, text_kind) = alt((
-		value(TextKind::Tool, tag("/tool")),
-		value(TextKind::Model, tag("/model")),
-		value(TextKind::Check, tag("/check")),
+fn perm_glob(input: &str) -> IResult<&str, PermGlob, VerboseError<&str>> {
+	let (input, kind) = alt((
+		value(PermKind::Read, tag("read ")),
+		value(PermKind::Write, tag("write ")),
 	)).parse(input)?;
 
-	let (input, body) = cut(context(
-		"expected `[<tool prefix>]` after /tool",
-		delimited(tag("["), take_while(body_char), tag("]")),
-	)).parse(input)?;
-	// TODO have to figure out the whitespace stuff of text commands, they shouldn't be smushed with other things
-	let (input, _) = take_while(newline)(input)?;
-	Ok((input, (text_kind, body.to_owned())))
+	let (input, body) = take_while(not_newline).parse(input)?;
+	Ok((input, PermGlob { kind, glob: body.to_owned() }))
 }
 
-fn perm_glob(input: &str) -> IResult<&str, (bool, PermGlob), VerboseError<&str>> {
-	let (input, is_allow) = alt((
-		value(true, tag("/allow")),
-		value(false, tag("/disallow")),
-	)).parse(input)?;
 
-	let (input, (kind, body)) = cut(context(
-		if is_allow { "expected `[<file glob>]` after /allow" } else { "expected `[<file glob>]` after /disallow" },
-		pair(
-			perm_kind,
-			delimited(tag("["), take_while(body_char), tag("]")),
-		),
-	)).parse(input)?;
-	// TODO have to figure out the whitespace stuff of text commands, they shouldn't be smushed with other things
-	let (input, _) = take_while(newline)(input)?;
-	Ok((input, (is_allow, PermGlob { kind, glob: body.to_owned() })))
-}
-
-fn perm_kind(input: &str) -> IResult<&str, PermKind, VerboseError<&str>> {
-	let (input, _) = tag("/")(input)?;
-	let (input, k) = alt((
-		value(PermKind::Read, tag("read")),
-		value(PermKind::Write, tag("write")),
-	)).parse(input)?;
-	Ok((input, k))
-}
-
-fn maxturns(input: &str) -> IResult<&str, usize, VerboseError<&str>> {
-	let (input, _) = tag("/maxturns")(input)?;
-	let (input, m) = cut(context(
-		"expected `[<uint>]` after /maxturns",
-		map_res(delimited(tag("["), take_while(body_char), tag("]")), |s: &str| s.parse::<usize>()),
-	)).parse(input)?;
-	// TODO have to figure out the whitespace stuff of text commands, they shouldn't be smushed with other things
-	let (input, _) = take_while(newline)(input)?;
-	Ok((input, m))
-}
-
-enum Segment {
-	TextCommand((TextKind, String)),
-	PermGlob((bool, PermGlob)),
-	MaxTurns(usize),
-	Text(char),
-	Comment,
-}
-
-fn segment(input: &str) -> IResult<&str, Segment, VerboseError<&str>> {
-	alt((
-		map(text_command, Segment::TextCommand),
-		map(perm_glob, Segment::PermGlob),
-		map(maxturns, Segment::MaxTurns),
-		map(anychar, Segment::Text),
-		map(html_comment, |_| Segment::Comment),
-	)).parse(input)
-}
-
-pub fn parse_instructions(input: &str) -> Result<Instructions, String> {
-	match fold_many0(
-		segment,
-		Instructions::default,
-		|mut instructions, seg| {
-			match seg {
-				Segment::TextCommand((text_kind, body)) => {
-					match text_kind {
-						TextKind::Tool => instructions.tools.get_or_insert_default().push(body),
-						TextKind::Model => instructions.model.try_insert(body).unwrap(),
-						TextKind::Check => instructions.check_command.try_insert(body).unwrap(),
-					}
-				},
-				Segment::PermGlob((is_allow, glob)) => {
-					if is_allow { instructions.allows.get_or_insert_default().push(glob) }
-					else { instructions.disallows.get_or_insert_default().push(glob) }
-				},
-				Segment::MaxTurns(maxturns) => instructions.maxturns.try_insert(maxturns).unwrap(),
-				Segment::Text(c) => instructions.text.push(c),
-				Segment::Comment => {},
-			}
-			instructions
-		},
-	).parse(input)
+impl<'de> serde::Deserialize<'de> for PermGlob {
+	fn deserialize<D>(deserializer: D) -> Result<PermGlob, D::Error>
+	where
+		D: serde::Deserializer<'de>,
 	{
-		Ok(("", instructions)) => Ok(instructions),
-		// unreachable in practice: `segment` succeeds on any non-empty input
-		Ok((rest, _)) => Err(format!("parser stopped early at {rest:?}")),
-		Err(nom::Err::Incomplete(_)) => Err("incomplete input".into()),
-		Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => Err(convert_error(input, e)),
+		struct PermGlobVisitor;
+
+		impl<'de> serde::de::Visitor<'de> for PermGlobVisitor {
+			type Value = PermGlob;
+
+			fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+				formatter.write_str("read|write <file glob>")
+			}
+
+			fn visit_str<E>(self, value: &str) -> Result<PermGlob, E>
+			where
+				E: serde::de::Error,
+			{
+				let (_remaining, perm_glob) = all_consuming(perm_glob).parse(value)
+					.map_err(|e| {
+						match e {
+							nom::Err::Incomplete(_) => E::custom(format!("incomplete input: {value}")),
+							nom::Err::Error(e) | nom::Err::Failure(e) => E::custom(convert_error(value, e)),
+						}
+					})?;
+
+				Ok(perm_glob)
+			}
+		}
+
+		deserializer.deserialize_str(PermGlobVisitor)
 	}
 }
 
-#[test]
-fn example() {
-	let input = "\
-/model[gemini::gemma-4-26b-a4b-it]
-<!-- /tool[my-tool] -->
-/maxturns[5]
-
-/tool[ls]
-
-blah blah random text instructions blah blah
-";
-	let doc = parse_instructions(input).unwrap();
-	assert_eq!(doc.model.as_deref(), Some("gemini::gemma-4-26b-a4b-it"));
-	assert_eq!(doc.maxturns, Some(5));
-	assert_eq!(doc.tools, Some(vec!["ls".into()]));
-	assert_eq!(doc.text, "blah blah random text instructions blah blah\n");
-}
 
 #[test]
-fn slash_without_bracket_is_plain_text() {
-	let doc = parse_instructions("see /foo and friends").unwrap();
-	assert!(doc.tools.is_none());
-	assert!(doc.model.is_none());
-	assert!(doc.allows.is_none());
-	assert!(doc.disallows.is_none());
-	assert!(doc.maxturns.is_none());
-	assert!(doc.check_command.is_none());
-	assert_eq!(doc.text, "see /foo and friends");
-}
+fn basic_examples() {
+	let input = "";
 
-#[test]
-fn unclosed_command_is_an_error() {
-	let err = parse_instructions("hello\n/tool[abc").unwrap_err();
-	assert!(err.contains("expected `]`"), "{err}");
-}
+	let (raw_params, body) = parse_instructions(input).unwrap();
+	assert!(raw_params.tools.is_none());
+	assert!(raw_params.model.is_none());
+	assert!(raw_params.allow.is_none());
+	assert!(raw_params.disallow.is_none());
+	assert!(raw_params.maxturns.is_none());
+	assert!(raw_params.check.is_none());
+	assert_eq!(body, "");
 
-#[test]
-fn newline_inside_body_is_an_error() {
-	let err = parse_instructions("/tool[a\nb] and more").unwrap_err();
-	assert!(err.contains("newlines are not allowed"), "{err}");
-}
+	let input = r#"---
+# yaml comment
+maxturns: 5
+# maxturns: 40
+model: gemma
+# model: kimi
+tools:
+- ls -al
+# - git commit
+- git ls
+allow:
+- write .env.example
+disallow:
+- read *.env
+check: cargo check
+# this comment is stripped
+# also this
+---
 
-#[test]
-fn opening_bracket_commits_even_mid_text() {
-	let doc = parse_instructions("go to https://example.com/a[b] now").unwrap();
-	assert!(doc.tools.is_none());
-	assert!(doc.model.is_none());
-	assert!(doc.allows.is_none());
-	assert!(doc.disallows.is_none());
-	assert!(doc.maxturns.is_none());
-	assert!(doc.check_command.is_none());
-	assert_eq!(doc.text, "go to https://example.com/a[b] now");
+So much to do
+
+fix all the problems and make me happy
+---
+some: misleading things
+---"#;
+
+	let (raw_params, body) = parse_instructions(input).unwrap();
+
+	assert_eq!(raw_params.tools.unwrap(), vec!["ls -al", "git ls"]);
+	assert_eq!(raw_params.model.as_deref(), Some("gemma"));
+	assert_eq!(raw_params.allow.unwrap(), vec![PermGlob { kind: PermKind::Write, glob: ".env.example".into() }]);
+	assert_eq!(raw_params.disallow.unwrap(), vec![PermGlob { kind: PermKind::Read, glob: "*.env".into() }]);
+	assert_eq!(raw_params.maxturns, Some(5));
+	assert_eq!(raw_params.check.as_deref(), Some("cargo check"));
+
+	assert_eq!(body, "So much to do
+
+fix all the problems and make me happy
+---
+some: misleading things
+---");
 }

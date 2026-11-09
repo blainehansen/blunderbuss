@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::{JsonResult, utils::{self, ResultExt}};
 
-// TODO need to handle the other tools!
 pub async fn run_tool(
 	tool_call: &genai::chat::ToolCall,
 	check_command: Option<&str>,
@@ -59,14 +58,16 @@ pub fn tool_general_shell(shell_prefix: &str) -> genai::chat::Tool {
 			"properties": {
 				"command_suffix": {
 					"type": "string",
-					"description": format!("the extra arguments/text to append to {shell_prefix}. this will be placed immediately after, so include an initial space if needed"),
+					"description": format!("the extra arguments/text to append to {shell_prefix}. this will be separated from the prefix by a space"),
 				 }
 			},
 		}))
 }
 async fn run_general_shell(general_shell_prefix: &str, ShellCommandArgs { command_suffix }: ShellCommandArgs) -> JsonResult {
+	// TODO we should absolutely shlex or whatever these args and do this the non sh way
+	// otherwise we open the gate for the llm to do random bash nonsense, which subverts the whole point of this hard allow list
 	let command_suffix = command_suffix.as_deref().unwrap_or("");
-	let general_command = format!("{general_shell_prefix}{command_suffix}");
+	let general_command = format!("{general_shell_prefix} {command_suffix}");
 
 	let output = tokio::process::Command::new("sh").arg("-c").arg(&general_command)
 		.output().await
@@ -127,6 +128,7 @@ struct GrepArgs {
 	/// the pattern to grep for
 	pattern: String,
 }
+// TODO should just allow a pipe through to raw grep itself, with some sanitization to ensure the allow/disallow rules are followed
 pub fn tool_grep() -> genai::chat::Tool {
 	let schema = schemars::schema_for!(GrepArgs).to_value();
 	genai::chat::Tool::new("grep")
