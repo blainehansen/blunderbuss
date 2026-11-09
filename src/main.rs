@@ -30,39 +30,6 @@ async fn try_klungo_config() -> anyhow::Result<Config> {
 		.context("wasn't able to parse .klungo.config.yml")
 }
 
-fn get_text_command_model(instructions: &str) -> Option<String> {
-	// TODO could probably have a more precise regex,but this does work
-	let regex = regex::Regex::new(r"/model\[([^\n\]]+)\]").unwrap();
-	let captures = regex.captures(&instructions)?;
-	captures.get(1).map(|m| m.as_str().to_string())
-}
-
-fn get_text_command_maxturns(instructions: &str) -> Option<usize> {
-	let regex = regex::Regex::new(r"/maxturns\[([1-9][0-9]+)\]").unwrap();
-	let captures = regex.captures(&instructions)?;
-	captures.get(1).and_then(|m| {
-		// TODO should handle this error better
-		m.as_str().parse().ok()
-	})
-}
-
-fn get_text_command_check(instructions: &str) -> Option<String> {
-	let regex = regex::Regex::new(r"/check\[([^\n\]]+)\]").unwrap();
-	let captures = regex.captures(&instructions)?;
-	captures.get(1).map(|m| m.as_str().to_string())
-}
-
-
-fn get_text_command_tools(instructions: &str) -> Vec<genai::chat::Tool> {
-	let regex = regex::Regex::new(r"/maxturns\[([1-9][0-9]+)\]").unwrap();
-
-	regex.captures_iter(&instructions).flat_map(|captures| {
-		captures.get(1)
-			// .or_else(|| { eprintln!(""); None })
-			.map(|m| tools::tool_general_shell(m.as_str()))
-	}).collect()
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
 	// tracing_subscriber::fmt()
@@ -75,20 +42,27 @@ async fn main() -> anyhow::Result<()> {
 		// TODO allow piping stdin at some point
 		.map_err(|e| anyhow::anyhow!("couldn't read the klungo.local.md file, which is the whole way klungo works!: {e}"))?;
 
-	let model = get_text_command_model(&instructions)
+	let parser::Instructions {
+		tools: instruction_tools, model, allows, disallows, maxturns, text: instruction_text, check_command,
+	} = parser::parse_instructions(&instructions)
+		.map_err(|e| anyhow::anyhow!(e))?;
+
+	let model = model
 		.or(default_model)
 		.ok_or_else(|| anyhow::anyhow!("you don't have a model specified! you have to either provide one using /model[<model qualifier>] in klungo.local.md or `default_model` in ~/.klungo.config.yml"))?;
 
-	let maxturns = get_text_command_maxturns(&instructions)
+	let maxturns = maxturns
 		.or(default_maxturns)
 		.unwrap_or(DEFAULT_MAXTURNS);
 
-	let check_command = get_text_command_check(&instructions);
-
 	// TODO add allow and disallow
 
-	let default_tools = default_tools.unwrap_or_default().into_iter().map(|t| tools::tool_general_shell(&t)).collect::<Vec<_>>();
-	let instruction_tools = get_text_command_tools(&instructions);
+	// let default_tools = default_tools.unwrap_or_default().into_iter().map(|t| tools::tool_general_shell(&t)).collect::<Vec<_>>();
+	// let instruction_tools = instruction_tools.unwrap_or_default().into_iter().map(|m| tools::tool_general_shell(m.as_str())).collect::<Vec<_>>();
+
+	let other_tools = default_tools.unwrap_or_default().into_iter().chain(instruction_tools.unwrap_or_default().into_iter())
+		.map(|m| tools::tool_general_shell(m.as_str())).collect::<Vec<_>>();
+
 	let mut all_tools = [
 		// tool_tree(),
 		tools::tool_grep(),
@@ -96,15 +70,14 @@ async fn main() -> anyhow::Result<()> {
 		tools::tool_create_file(),
 		tools::tool_write_chunk(),
 	].into_iter()
-		.chain(default_tools.clone())
-		.chain(instruction_tools.clone())
+		.chain(other_tools.clone())
 		.collect::<Vec<_>>();
 
 	if let Some(check_command) = &check_command {
 		all_tools.push(tools::tool_check_command(check_command));
 	}
 
-	let other_tools = default_tools.into_iter().chain(instruction_tools.into_iter())
+	let other_tools = other_tools.into_iter()
 		.map(|t| (t.name.to_string(), t)).collect::<HashMap<_, _>>();
 
 
@@ -125,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
 		.with_system(include_str!("./system.md"))
 		.with_tools(all_tools);
 
-	chat_req = chat_req.append_message(genai::chat::ChatMessage::user(instructions));
+	chat_req = chat_req.append_message(genai::chat::ChatMessage::user(instruction_text));
 
 	// TODO at the beginning we push the basic "temp" git commit that's formatted in such a way that we can easily undo it
 	// https://itnext.io/multitask-like-a-pro-with-the-wip-commit-2f4d40ca0192

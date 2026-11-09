@@ -12,7 +12,15 @@ pub struct Instructions {
 	pub allows: Option<Vec<PermGlob>>,
 	pub disallows: Option<Vec<PermGlob>>,
 	pub maxturns: Option<usize>,
+	pub check_command: Option<String>,
 	pub text: String,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum TextKind {
+	Model,
+	Tool,
+	Check,
 }
 
 #[derive(Debug)]
@@ -25,10 +33,6 @@ pub struct PermGlob {
 pub enum PermKind {
 	Read,
 	Write,
-}
-
-fn name_char(c: char) -> bool {
-	c.is_alphanumeric() || c == '-' || c == '_'
 }
 
 fn newline(c: char) -> bool {
@@ -50,26 +54,20 @@ fn html_comment(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
 	).parse(input)
 }
 
-fn tool(input: &str) -> IResult<&str, String, VerboseError<&str>> {
-	let (input, _) = tag("/tool")(input)?;
+fn text_command(input: &str) -> IResult<&str, (TextKind, String), VerboseError<&str>> {
+	let (input, text_kind) = alt((
+		value(TextKind::Tool, tag("/tool")),
+		value(TextKind::Model, tag("/model")),
+		value(TextKind::Check, tag("/check")),
+	)).parse(input)?;
+
 	let (input, body) = cut(context(
 		"expected `[<tool prefix>]` after /tool",
 		delimited(tag("["), take_while(body_char), tag("]")),
 	)).parse(input)?;
 	// TODO have to figure out the whitespace stuff of text commands, they shouldn't be smushed with other things
 	let (input, _) = take_while(newline)(input)?;
-	Ok((input, body.to_owned()))
-}
-
-fn model(input: &str) -> IResult<&str, String, VerboseError<&str>> {
-	let (input, _) = tag("/model")(input)?;
-	let (input, body) = cut(context(
-		"expected `[<model>]` after /model",
-		delimited(tag("["), take_while(body_char), tag("]")),
-	)).parse(input)?;
-	// TODO have to figure out the whitespace stuff of text commands, they shouldn't be smushed with other things
-	let (input, _) = take_while(newline)(input)?;
-	Ok((input, body.to_owned()))
+	Ok((input, (text_kind, body.to_owned())))
 }
 
 fn perm_glob(input: &str) -> IResult<&str, (bool, PermGlob), VerboseError<&str>> {
@@ -111,8 +109,7 @@ fn maxturns(input: &str) -> IResult<&str, usize, VerboseError<&str>> {
 }
 
 enum Segment {
-	Tool(String),
-	Model(String),
+	TextCommand((TextKind, String)),
 	PermGlob((bool, PermGlob)),
 	MaxTurns(usize),
 	Text(char),
@@ -121,8 +118,7 @@ enum Segment {
 
 fn segment(input: &str) -> IResult<&str, Segment, VerboseError<&str>> {
 	alt((
-		map(tool, Segment::Tool),
-		map(model, Segment::Model),
+		map(text_command, Segment::TextCommand),
 		map(perm_glob, Segment::PermGlob),
 		map(maxturns, Segment::MaxTurns),
 		map(anychar, Segment::Text),
@@ -136,12 +132,17 @@ pub fn parse_instructions(input: &str) -> Result<Instructions, String> {
 		Instructions::default,
 		|mut instructions, seg| {
 			match seg {
-				Segment::Tool(tool) => instructions.tools.get_or_insert_default().push(tool),
+				Segment::TextCommand((text_kind, body)) => {
+					match text_kind {
+						TextKind::Tool => instructions.tools.get_or_insert_default().push(body),
+						TextKind::Model => instructions.model.try_insert(body).unwrap(),
+						TextKind::Check => instructions.check_command.try_insert(body).unwrap(),
+					}
+				},
 				Segment::PermGlob((is_allow, glob)) => {
 					if is_allow { instructions.allows.get_or_insert_default().push(glob) }
 					else { instructions.disallows.get_or_insert_default().push(glob) }
 				},
-				Segment::Model(model) => instructions.model.try_insert(model).unwrap(),
 				Segment::MaxTurns(maxturns) => instructions.maxturns.try_insert(maxturns).unwrap(),
 				Segment::Text(c) => instructions.text.push(c),
 				Segment::Comment => {},
@@ -170,21 +171,21 @@ fn example() {
 blah blah random text instructions blah blah
 ";
 	let doc = parse_instructions(input).unwrap();
-	assert_eq!(
-		doc.commands,
-		vec![
-			Command { name: "model".into(), body: "gemini::gemma-4-26b-a4b-it".into() },
-			Command { name: "maxturns".into(), body: "5".into() },
-			Command { name: "tool".into(), body: "ls".into() },
-		]
-	);
+	assert_eq!(doc.model.as_deref(), Some("gemini::gemma-4-26b-a4b-it"));
+	assert_eq!(doc.maxturns, Some(5));
+	assert_eq!(doc.tools, Some(vec!["ls".into()]));
 	assert_eq!(doc.text, "blah blah random text instructions blah blah\n");
 }
 
 #[test]
 fn slash_without_bracket_is_plain_text() {
 	let doc = parse_instructions("see /foo and friends").unwrap();
-	assert!(doc.commands.is_empty());
+	assert!(doc.tools.is_none());
+	assert!(doc.model.is_none());
+	assert!(doc.allows.is_none());
+	assert!(doc.disallows.is_none());
+	assert!(doc.maxturns.is_none());
+	assert!(doc.check_command.is_none());
 	assert_eq!(doc.text, "see /foo and friends");
 }
 
@@ -202,11 +203,12 @@ fn newline_inside_body_is_an_error() {
 
 #[test]
 fn opening_bracket_commits_even_mid_text() {
-	// once `/thing[` appears, it *is* a command — even inside a URL
 	let doc = parse_instructions("go to https://example.com/a[b] now").unwrap();
-	assert_eq!(
-		doc.commands,
-		vec![Command { name: "a".into(), body: "b".into() }]
-	);
-	assert_eq!(doc.text, "go to https://example.com/ now");
+	assert!(doc.tools.is_none());
+	assert!(doc.model.is_none());
+	assert!(doc.allows.is_none());
+	assert!(doc.disallows.is_none());
+	assert!(doc.maxturns.is_none());
+	assert!(doc.check_command.is_none());
+	assert_eq!(doc.text, "go to https://example.com/a[b] now");
 }
