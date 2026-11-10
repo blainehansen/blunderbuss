@@ -16,20 +16,33 @@ async fn main() -> anyhow::Result<()> {
 
 	tokio::select! {
 		res = tokio::signal::ctrl_c() => {
-			match res {
-				Ok(()) => println!("Ctrl+C received! Dropping main program future..."),
-				Err(err) => eprintln!("Failed to listen for Ctrl+C: {}", err),
-			}
+			println!("ctrl+c received, popping the temp git checkpoint commit if there is one");
+			let _ = hard_reset_checkpoint_commit().await;
+			res?
 		},
 		chat_res = chat_loop() => {
 			match chat_res {
-				Ok(()) => println!("Ctrl+C received! Dropping main program future..."),
-				Err(err) => eprintln!("Failed to listen for Ctrl+C: {}", err),
+				Ok(()) => {
+					// nothing to do in this case, everything succeeded, let's go home
+				},
+				Err(err) => {
+					println!("some error encountered, popping the temp git checkpoint commit if there is one");
+					let _ = hard_reset_checkpoint_commit().await;
+					return Err(err);
+				},
 			}
 		},
 	}
 
 	Ok(())
+}
+
+#[derive(Debug)]
+struct ChatParams {
+	model: String,
+	maxturns: usize,
+	shell_tools: HashMap<String, tools::ShellTool>,
+	check_command: Option<String>,
 }
 
 async fn create_new_chat() -> anyhow::Result<(ChatParams, genai::chat::ChatRequest)> {
@@ -57,8 +70,9 @@ async fn create_new_chat() -> anyhow::Result<(ChatParams, genai::chat::ChatReque
 
 	// TODO add allow and disallow
 
-	let other_tools = default_tools.unwrap_or_default().into_iter().chain(instruction_tools.unwrap_or_default().into_iter())
-		.map(|m| tools::tool_general_shell(m.as_str())).collect::<Vec<_>>();
+	let (shell_tools, chat_shell_tools) = default_tools.unwrap_or_default().into_iter().chain(instruction_tools.unwrap_or_default().into_iter())
+		.map(|m| tools::tool_general_shell(m)).collect::<Result<(HashMap<_, _>, Vec<_>), _>>()
+		.map_err(|e| anyhow::anyhow!(e))?;
 
 	let mut all_tools = [
 		// tool_tree(),
@@ -67,21 +81,11 @@ async fn create_new_chat() -> anyhow::Result<(ChatParams, genai::chat::ChatReque
 		tools::tool_create_file(),
 		tools::tool_write_chunk(),
 	].into_iter()
-		.chain(other_tools.clone())
+		.chain(chat_shell_tools)
 		.collect::<Vec<_>>();
 
 	if let Some(check_command) = &check_command {
 		all_tools.push(tools::tool_check_command(check_command));
-	}
-
-	let other_tools = other_tools.into_iter()
-		.map(|t| (t.name.to_string(), t)).collect::<HashMap<_, _>>();
-
-
-	println!("using model {model}");
-	println!("using maxturns {maxturns}");
-	if let Some(check_command) = &check_command {
-		println!("using check command {check_command}");
 	}
 
 	let mut chat_req = genai::chat::ChatRequest::default()
@@ -90,8 +94,16 @@ async fn create_new_chat() -> anyhow::Result<(ChatParams, genai::chat::ChatReque
 
 	chat_req = chat_req.append_message(genai::chat::ChatMessage::user(text));
 
-	let instructions = ChatParams { model, maxturns, other_tools, check_command };
+	println!("using model {model}");
+	println!("using maxturns {maxturns}");
+	for shell_tool in shell_tools.keys() {
+		println!("using shell tool: {shell_tool}");
+	}
+	if let Some(check_command) = &check_command {
+		println!("using check command {check_command}");
+	}
 
+	let instructions = ChatParams { model, maxturns, shell_tools, check_command };
 	Ok((instructions, chat_req))
 }
 
@@ -113,14 +125,6 @@ async fn try_klungo_config() -> anyhow::Result<UserConfig> {
 
 	yaml_serde::from_str(&file_contents)
 		.context("wasn't able to parse .klungo.config.yml")
-}
-
-#[derive(Debug)]
-struct ChatParams {
-	model: String,
-	maxturns: usize,
-	other_tools: HashMap<String, genai::chat::Tool>,
-	check_command: Option<String>,
 }
 
 
@@ -156,7 +160,7 @@ async fn chat_loop() -> anyhow::Result<()> {
 		// something fancy in the future would be to divide up the tools by the things they could effect (files, whatever)
 		// however that's easier said than done, since the tools the user specifies could mess things up
 		for tool_call in tool_calls.into_iter() {
-			let output = tools::run_tool(&tool_call, p.check_command.as_deref(), &p.other_tools).await;
+			let output = tools::run_tool(&tool_call, p.check_command.as_deref(), &p.shell_tools).await;
 
 			let tool_response = genai::chat::ToolResponse::from_tool_call(&tool_call, output.to_string());
 			tool_responses.push(tool_response);
@@ -171,70 +175,69 @@ async fn chat_loop() -> anyhow::Result<()> {
 		if !tool_responses.is_empty() {
 			chat_req = chat_req.append_message(tool_responses);
 			turn += 1;
-			continue
+			continue;
 		}
+
 		// there aren't any more calls (and therefore any more responses), the llm says its done
-		else {
-			if let Some(check_command) = &p.check_command {
-				println!("klungo says it's finished, running your check command {check_command}");
-				let output = tokio::process::Command::new("sh").arg("-c").arg(check_command)
-					.output().await.with_context(|| format!("wasn't able to call sh -c '{check_command}'"))?;
+		if let Some(check_command) = &p.check_command {
+			println!("klungo says it's finished, running your check command {check_command}");
+			let output = tokio::process::Command::new("sh").arg("-c").arg(check_command)
+				.output().await.with_context(|| format!("wasn't able to call sh -c '{check_command}'"))?;
 
-				if !output.status.success() {
-					let stdout = String::from_utf8_lossy(&output.stdout);
-					let stderr = String::from_utf8_lossy(&output.stderr);
-					println!("check command {check_command} failed! sending the output back to klungo to try again");
-					let check_command_feedback = format!("the check command {check_command} failed.\nstdout:\n{stdout}\n\n\nstderr:\n{stderr}");
-					chat_req = chat_req.append_message(genai::chat::ChatMessage::user(check_command_feedback));
+			if !output.status.success() {
+				let stdout = String::from_utf8_lossy(&output.stdout);
+				let stderr = String::from_utf8_lossy(&output.stderr);
+				println!("check command {check_command} failed! sending the output back to klungo to try again");
 
-					turn += 1;
-					continue
-				}
-				println!("check command {check_command} succeeded!");
+				let check_command_feedback = format!("the check command {check_command} failed.\nstdout:\n{stdout}\n\n\nstderr:\n{stderr}");
+				chat_req = chat_req.append_message(genai::chat::ChatMessage::user(check_command_feedback));
+				turn += 1;
+				continue;
 			}
+			println!("check command {check_command} succeeded!");
+		}
 
-			const LOOKS_GOOD: &'static str = "looks good";
-			const NOPE_REVERT: &'static str = "nope revert";
-			const TRY_AGAIN_ANEW: &'static str = "try again (start new chat from klungo.local.md)";
-			const TRY_AGAIN_FROM_HERE: &'static str = "try again (continue this chat)";
-			let options: Vec<&str> = vec![LOOKS_GOOD, NOPE_REVERT, TRY_AGAIN_FROM_HERE];
-			let page_size = options.len();
+		const LOOKS_GOOD: &'static str = "looks good";
+		const NOPE_REVERT: &'static str = "nope revert";
+		const TRY_AGAIN_ANEW: &'static str = "try again (start new chat from klungo.local.md)";
+		const TRY_AGAIN_FROM_HERE: &'static str = "try again (continue this chat)";
+		let options: Vec<&str> = vec![LOOKS_GOOD, NOPE_REVERT, TRY_AGAIN_FROM_HERE];
+		let page_size = options.len();
 
-			let choice = inquire::Select::new("How's that?", options)
-				.with_page_size(page_size)
-				.without_help_message()
-				.prompt().context("there was some issue with the inquire library?")?;
+		let choice = inquire::Select::new("How's that?", options)
+			.with_page_size(page_size)
+			.without_help_message()
+			.prompt().context("there was some issue with the inquire library?")?;
 
-			match choice {
-				LOOKS_GOOD => {
-					// pop the temp git commit
-					soft_reset_checkpoint_commit().await?;
-					break;
-				},
-				NOPE_REVERT => {
-					// revert and hard reset
-					hard_reset_checkpoint_commit().await?;
-					// stop trying, the user doesn't want to bother
-					break;
-				},
-				TRY_AGAIN_ANEW => {
-					// this tries again and rereads klungo.local.md
-					hard_reset_checkpoint_commit().await?;
-					(p, chat_req) = create_new_chat().await?;
-					turn = 0;
-					continue;
-				},
-				TRY_AGAIN_FROM_HERE => {
-					// this tries again with the context we already have
-					hard_reset_checkpoint_commit().await?;
-					turn = 0;
-					chat_req = chat_req.append_message(genai::chat::ChatMessage::user(
-						"I'm unsatisfied with that attempt. everything has been reverted, try again",
-					));
-					continue;
-				},
-				unknown => { return Err(anyhow::anyhow!("how did you choose this? {unknown}")) }
-			}
+		match choice {
+			LOOKS_GOOD => {
+				// pop the temp git commit
+				soft_reset_checkpoint_commit().await?;
+				break;
+			},
+			NOPE_REVERT => {
+				// revert and hard reset
+				hard_reset_checkpoint_commit().await?;
+				// stop trying, the user doesn't want to bother
+				break;
+			},
+			TRY_AGAIN_ANEW => {
+				// this tries again and rereads klungo.local.md
+				hard_reset_checkpoint_commit().await?;
+				(p, chat_req) = create_new_chat().await?;
+				turn = 0;
+				continue;
+			},
+			TRY_AGAIN_FROM_HERE => {
+				// this tries again with the context we already have
+				hard_reset_checkpoint_commit().await?;
+				chat_req = chat_req.append_message(genai::chat::ChatMessage::user(
+					"I'm unsatisfied with that attempt. everything has been reverted, try again",
+				));
+				turn = 0;
+				continue;
+			},
+			unknown => { return Err(anyhow::anyhow!("how did you choose this? {unknown}")) }
 		}
 	}
 

@@ -5,7 +5,7 @@ use crate::{JsonResult, utils::{self, ResultExt}};
 pub async fn run_tool(
 	tool_call: &genai::chat::ToolCall,
 	check_command: Option<&str>,
-	other_tools: &HashMap<String, genai::chat::Tool>,
+	shell_tools: &HashMap<String, ShellTool>,
 ) -> serde_json::Value {
 	let raw_args = tool_call.fn_arguments.clone();
 
@@ -35,10 +35,10 @@ pub async fn run_tool(
 			run_check_command(check_command.unwrap())
 				.await.map_err(utils::json_err).into_ok_or_err()
 		},
-		other_tool if other_tools.contains_key(other_tool) => {
-			let other_tool = other_tools.get(other_tool).unwrap();
+		shell_tool if shell_tools.contains_key(shell_tool) => {
+			let shell_tool = shell_tools.get(shell_tool).unwrap();
 			serde_json::from_value::<ShellCommandArgs>(raw_args).map_err(utils::json_err)
-				.async_map(async |a| run_general_shell(other_tool.name.as_str(), a).await.map_err(utils::json_err).into_ok_or_err())
+				.async_map(async |a| run_general_shell(shell_tool, a).await.map_err(utils::json_err).into_ok_or_err())
 				.await.into_ok_or_err()
 		},
 		unknown_tool => serde_json::json!({ "error": format!("unknown tool: {unknown_tool}") }),
@@ -47,36 +47,66 @@ pub async fn run_tool(
 
 #[derive(Debug, serde::Deserialize)]
 struct ShellCommandArgs {
-	command_suffix: Option<String>,
+	suffix: Option<String>,
 }
 
-pub fn tool_general_shell(shell_prefix: &str) -> genai::chat::Tool {
-	genai::chat::Tool::new(shell_prefix)
+#[derive(Debug)]
+pub struct ShellTool {
+	first: String,
+	rest: Vec<String>,
+}
+
+impl ShellTool {
+	fn from_vec(shell_split: Vec<String>) -> Option<ShellTool> {
+		let mut iter = shell_split.into_iter();
+		let first = iter.next()?;
+		let rest = iter.collect();
+		Some(ShellTool { first, rest })
+	}
+}
+
+pub fn tool_general_shell(shell_prefix: String) -> Result<((String, ShellTool), genai::chat::Tool), String> {
+	let shell_prefix_split = shlex::split(&shell_prefix)
+		.ok_or_else(|| format!("{shell_prefix} isn't valid, it couldn't be split by shlex"))?;
+	let shell_tool = ShellTool::from_vec(shell_prefix_split)
+		.ok_or_else(|| format!("{shell_prefix} is empty after splitting"))?;
+
+	let tool = genai::chat::Tool::new(&shell_prefix)
 		.with_description(format!("run the {shell_prefix} shell command, with possible extra arguments/text appended"))
 		.with_schema(serde_json::json!({
 			"type": "object",
 			"properties": {
-				"command_suffix": {
+				"suffix": {
 					"type": "string",
 					"description": format!("the extra arguments/text to append to {shell_prefix}. this will be separated from the prefix by a space"),
 				 }
 			},
-		}))
+		}));
+
+	Ok(((shell_prefix, shell_tool), tool))
 }
-async fn run_general_shell(general_shell_prefix: &str, ShellCommandArgs { command_suffix }: ShellCommandArgs) -> JsonResult {
-	// TODO we should absolutely shlex or whatever these args and do this the non sh way
-	// otherwise we open the gate for the llm to do random bash nonsense, which subverts the whole point of this hard allow list
-	let command_suffix = command_suffix.as_deref().unwrap_or("");
-	let general_command = format!("{general_shell_prefix} {command_suffix}");
+async fn run_general_shell(shell_tool: &ShellTool, ShellCommandArgs { suffix }: ShellCommandArgs) -> JsonResult {
+	let mut cmd = tokio::process::Command::new(&shell_tool.first);
+	cmd.args(&shell_tool.rest);
 
-	let output = tokio::process::Command::new("sh").arg("-c").arg(&general_command)
-		.output().await
-		.map_err(|e| format!("wasn't able to call sh -c '{general_command}': {e}"))?;
+	if let Some(suffix) = &suffix {
+		let command_split = shlex::split(suffix)
+			.ok_or_else(|| format!("{suffix} isn't valid, it couldn't be split by shlex"))?;
 
+		cmd.args(command_split);
+	}
+
+	let make_full_command = || format!("{} {} {}", shell_tool.first, shell_tool.rest.join(" "), suffix.as_deref().unwrap_or(""));
+
+	let output = cmd.output().await.map_err(|e| {
+		let full_command = make_full_command();
+		format!("wasn't able to call {full_command}: {e}")
+	})?;
 	if !output.status.success() {
 		let stdout = String::from_utf8_lossy(&output.stdout);
 		let stderr = String::from_utf8_lossy(&output.stderr);
-		Err(format!("the command {general_command} failed.\nstdout:\n{stdout}\n\n\nstderr:\n{stderr}"))
+		let full_command = make_full_command();
+		Err(format!("the command {full_command} failed.\nstdout:\n{stdout}\n\n\nstderr:\n{stderr}"))
 	}
 	else { Ok(serde_json::json!("check command ran successfully")) }
 }
