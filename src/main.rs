@@ -6,44 +6,40 @@ mod utils;
 mod parser;
 
 type JsonResult = Result<serde_json::Value, String>;
-const DEFAULT_MAXTURNS: usize = 20;
 
-#[derive(Debug, Default, serde::Deserialize)]
-struct Config {
-	default_model: Option<String>,
-	default_maxturns: Option<usize>,
-	tools: Option<Vec<String>>,
-}
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+	// tracing_subscriber::fmt()
+	// 	.with_env_filter(EnvFilter::new("genai=debug"))
+	// 	// .with_max_level(tracing::Level::DEBUG)
+	// 	.init();
 
-async fn try_klungo_config() -> anyhow::Result<Config> {
-	let klungo_config_path = std::env::home_dir().unwrap_or("~/".into()).join(".klungo.config.yml");
-	if !tokio::fs::try_exists(&klungo_config_path).await.unwrap_or(false) {
-		return Ok(Config::default())
+	tokio::select! {
+		res = tokio::signal::ctrl_c() => {
+			match res {
+				Ok(()) => println!("Ctrl+C received! Dropping main program future..."),
+				Err(err) => eprintln!("Failed to listen for Ctrl+C: {}", err),
+			}
+		},
+		chat_res = chat_loop() => {
+			match chat_res {
+				Ok(()) => println!("Ctrl+C received! Dropping main program future..."),
+				Err(err) => eprintln!("Failed to listen for Ctrl+C: {}", err),
+			}
+		},
 	}
 
-	let file_contents = tokio::fs::read_to_string(klungo_config_path).await
-		.context("wasn't able to read .klungo.config.yml even though it exists?")?;
-
-	yaml_serde::from_str(&file_contents)
-		.context("wasn't able to parse .klungo.config.yml")
+	Ok(())
 }
 
-#[derive(Debug)]
-struct Params {
-	model: String,
-	maxturns: usize,
-	other_tools: HashMap<String, genai::chat::Tool>,
-	check_command: Option<String>,
-}
-
-async fn create_new_chat() -> anyhow::Result<(Params, genai::chat::ChatRequest)> {
-	let Config { default_model, default_maxturns, tools: default_tools } = try_klungo_config().await?;
+async fn create_new_chat() -> anyhow::Result<(ChatParams, genai::chat::ChatRequest)> {
+	let UserConfig { default_model, default_maxturns, tools: default_tools } = try_klungo_config().await?;
 	let instructions = tokio::fs::read_to_string("klungo.local.md").await
 		// TODO allow piping stdin at some point
 		.map_err(|e| anyhow::anyhow!("couldn't read the klungo.local.md file, which is the whole way klungo works!: {e}"))?;
 
 	let (
-		parser::Params {
+		parser::RawParams {
 			tools: instruction_tools, model, maxturns, allow: _, disallow: _, check: check_command,
 		},
 		text,
@@ -54,6 +50,7 @@ async fn create_new_chat() -> anyhow::Result<(Params, genai::chat::ChatRequest)>
 		.or(default_model)
 		.ok_or_else(|| anyhow::anyhow!("you don't have a model specified! you have to either provide one using the `model` frontmatter param in klungo.local.md or `default_model` in ~/.klungo.config.yml"))?;
 
+	const DEFAULT_MAXTURNS: usize = 20;
 	let maxturns = maxturns
 		.or(default_maxturns)
 		.unwrap_or(DEFAULT_MAXTURNS);
@@ -93,18 +90,41 @@ async fn create_new_chat() -> anyhow::Result<(Params, genai::chat::ChatRequest)>
 
 	chat_req = chat_req.append_message(genai::chat::ChatMessage::user(text));
 
-	let instructions = Params { model, maxturns, other_tools, check_command };
+	let instructions = ChatParams { model, maxturns, other_tools, check_command };
 
 	Ok((instructions, chat_req))
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-	// tracing_subscriber::fmt()
-	// 	.with_env_filter(EnvFilter::new("genai=debug"))
-	// 	// .with_max_level(tracing::Level::DEBUG)
-	// 	.init();
+#[derive(Debug, Default, serde::Deserialize)]
+struct UserConfig {
+	default_model: Option<String>,
+	default_maxturns: Option<usize>,
+	tools: Option<Vec<String>>,
+}
 
+async fn try_klungo_config() -> anyhow::Result<UserConfig> {
+	let klungo_config_path = std::env::home_dir().unwrap_or("~/".into()).join(".klungo.config.yml");
+	if !tokio::fs::try_exists(&klungo_config_path).await.unwrap_or(false) {
+		return Ok(UserConfig::default())
+	}
+
+	let file_contents = tokio::fs::read_to_string(klungo_config_path).await
+		.context("wasn't able to read .klungo.config.yml even though it exists?")?;
+
+	yaml_serde::from_str(&file_contents)
+		.context("wasn't able to parse .klungo.config.yml")
+}
+
+#[derive(Debug)]
+struct ChatParams {
+	model: String,
+	maxturns: usize,
+	other_tools: HashMap<String, genai::chat::Tool>,
+	check_command: Option<String>,
+}
+
+
+async fn chat_loop() -> anyhow::Result<()> {
 	let (mut p, mut chat_req) = create_new_chat().await?;
 
 	// we just use the out of the box genai behavior, and all its model/auth resolver magic

@@ -9,7 +9,7 @@ use nom_language::error::{VerboseError, convert_error};
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Params {
+pub struct RawParams {
 	pub tools: Option<Vec<String>>,
 	pub model: Option<String>,
 	pub allow: Option<Vec<PermGlob>>,
@@ -30,7 +30,7 @@ pub enum PermKind {
 	Write,
 }
 
-pub fn parse_instructions(input: &str) -> anyhow::Result<(Params, String)> {
+pub fn parse_instructions(input: &str) -> anyhow::Result<(RawParams, String)> {
 	let mut matter = gray_matter::Matter::<gray_matter::engine::YAML>::new();
 	matter.excerpt_delimiter = None;
 

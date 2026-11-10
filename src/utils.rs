@@ -8,21 +8,21 @@ impl<T> ResultExt<T> for Result<T, T> {
 	}
 }
 
-pub trait OptionExt<T> {
-	fn try_insert(&mut self, other: T) -> Result<(), &T>;
-}
+// pub trait OptionExt<T> {
+// 	fn try_insert(&mut self, other: T) -> Result<(), &T>;
+// }
 
-impl<T> OptionExt<T> for Option<T> {
-	fn try_insert(&mut self, other: T) -> Result<(), &T> {
-		match self {
-			Some(value) => Err(value),
-			None => {
-				let _ = self.insert(other);
-				Ok(())
-			},
-		}
-	}
-}
+// impl<T> OptionExt<T> for Option<T> {
+// 	fn try_insert(&mut self, other: T) -> Result<(), &T> {
+// 		match self {
+// 			Some(value) => Err(value),
+// 			None => {
+// 				let _ = self.insert(other);
+// 				Ok(())
+// 			},
+// 		}
+// 	}
+// }
 
 pub fn json_err(message: impl ToString) -> serde_json::Value {
 	serde_json::json!({ "error": message.to_string() })
