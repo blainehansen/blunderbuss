@@ -6,6 +6,7 @@ pub async fn run_tool(
 	tool_call: &genai::chat::ToolCall,
 	check_command: Option<&str>,
 	shell_tools: &HashMap<String, ShellTool>,
+	path_env: &utils::PathEnv,
 ) -> serde_json::Value {
 	let raw_args = tool_call.fn_arguments.clone();
 
@@ -13,33 +14,47 @@ pub async fn run_tool(
 	match tool_call.fn_name.as_str() {
 		"grep" => {
 			serde_json::from_value::<GrepArgs>(raw_args).map_err(utils::json_err)
-				.async_map(async |a| run_grep(a).await.map_err(utils::json_err).into_ok_or_err())
-				.await.into_ok_or_err()
+				.inspect(|a| println!("grep(dir={}, pattern={})", a.dir.display(), a.pattern))
+				.async_map(async |a| run_grep(path_env, a).await.map_err(utils::json_err).into_ok_or_err()).await
+				.inspect(|r| println!("{r}"))
+				.into_ok_or_err()
 		},
 		"read_file" => {
 			serde_json::from_value::<ReadFileArgs>(raw_args).map_err(utils::json_err)
-				.async_map(async |a| run_read_file(a).await.map_err(utils::json_err).into_ok_or_err())
-				.await.into_ok_or_err()
+				.inspect(|a| println!("read_file(file={})", a.file.display()))
+				.async_map(async |a| run_read_file(path_env, a).await.map_err(utils::json_err).into_ok_or_err()).await
+				.inspect(|r| println!("{r}"))
+				.into_ok_or_err()
 		},
 		"create_file" => {
 			serde_json::from_value::<CreateFileArgs>(raw_args).map_err(utils::json_err)
-				.async_map(async |a| run_create_file(a).await.map_err(utils::json_err).into_ok_or_err())
-				.await.into_ok_or_err()
+				.inspect(|a| println!("create_file(file={}, contents.len={})", a.file.display(), a.contents.len()))
+				.async_map(async |a| run_create_file(path_env, a).await.map_err(utils::json_err).into_ok_or_err()).await
+				.inspect(|r| println!("{r}"))
+				.into_ok_or_err()
 		},
 		"write_chunk" => {
 			serde_json::from_value::<WriteChunkArgs>(raw_args).map_err(utils::json_err)
-				.async_map(async |a| run_write_chunk(a).await.map_err(utils::json_err).into_ok_or_err())
-				.await.into_ok_or_err()
+				.inspect(|a| println!("write_chunk(file={}, replace_text.len={}, with_text.len={})", a.file.display(), a.replace_text.len(), a.with_text.len()))
+				.async_map(async |a| run_write_chunk(path_env, a).await.map_err(utils::json_err).into_ok_or_err()).await
+				.inspect(|r| println!("{r}"))
+				.into_ok_or_err()
 		},
 		"check_command" if check_command.is_some() => {
-			run_check_command(check_command.unwrap())
-				.await.map_err(utils::json_err).into_ok_or_err()
+			let check_command = check_command.unwrap();
+			println!("(check_command) `{check_command}`");
+			run_check_command(check_command).await
+				.map_err(utils::json_err)
+				.inspect(|r| println!("{r}"))
+				.into_ok_or_err()
 		},
 		shell_tool if shell_tools.contains_key(shell_tool) => {
 			let shell_tool = shell_tools.get(shell_tool).unwrap();
 			serde_json::from_value::<ShellCommandArgs>(raw_args).map_err(utils::json_err)
-				.async_map(async |a| run_general_shell(shell_tool, a).await.map_err(utils::json_err).into_ok_or_err())
-				.await.into_ok_or_err()
+				.inspect(|a| println!("(shell tool) `{} {}` `{}`", shell_tool.first, shell_tool.rest.join(" "), a.suffix.as_deref().unwrap_or("")))
+				.async_map(async |a| run_general_shell(shell_tool, a).await.map_err(utils::json_err).into_ok_or_err()).await
+				.inspect(|r| println!("{r}"))
+				.into_ok_or_err()
 		},
 		unknown_tool => serde_json::json!({ "error": format!("unknown tool: {unknown_tool}") }),
 	}
@@ -165,8 +180,8 @@ pub fn tool_grep() -> genai::chat::Tool {
 		.with_description("grep recursively through `dir` to find `pattern`, using ripgrep")
 		.with_schema(schema)
 }
-async fn run_grep(GrepArgs { dir, pattern }: GrepArgs) -> JsonResult {
-	utils::dir_is_allowed_based_on_gitignore(&dir)?;
+async fn run_grep(path_env: &utils::PathEnv, GrepArgs { dir, pattern }: GrepArgs) -> JsonResult {
+	path_env.dir_is_allowed(&dir)?;
 
 	const MAX_MATCHES: usize = 200;
 
@@ -226,8 +241,8 @@ pub fn tool_read_file() -> genai::chat::Tool {
 		// maybe using `starting_from` or `ending_at` to limit how much is read
 		.with_schema(schema)
 }
-async fn run_read_file(ReadFileArgs { file }: ReadFileArgs) -> JsonResult {
-	utils::path_is_allowed_based_on_gitignore(&file)?;
+async fn run_read_file(path_env: &utils::PathEnv, ReadFileArgs { file }: ReadFileArgs) -> JsonResult {
+	path_env.file_is_allowed(&file)?;
 
 	let contents = tokio::fs::read_to_string(&file)
 		.await.map_err(|e| format!("unable to read file {}: {e}", file.display()))?;
@@ -250,7 +265,9 @@ pub fn tool_create_file() -> genai::chat::Tool {
 	genai::chat::Tool::new("create_file")
 		.with_schema(schema)
 }
-async fn run_create_file(CreateFileArgs { file, contents }: CreateFileArgs) -> JsonResult {
+async fn run_create_file(path_env: &utils::PathEnv, CreateFileArgs { file, contents }: CreateFileArgs) -> JsonResult {
+	path_env.file_is_allowed(&file)?;
+
 	if let Some(parent) = file.parent() {
 		tokio::fs::create_dir_all(parent)
 			.await.map_err(|e| format!("unable to create parent directories for {}: {e}", file.display()))?;
@@ -281,8 +298,8 @@ pub fn tool_write_chunk() -> genai::chat::Tool {
 		.with_description("write a chunk of text into `file`, replacing `replace_text` with `with_text`")
 		.with_schema(schema)
 }
-async fn run_write_chunk(WriteChunkArgs { file, replace_text, with_text }: WriteChunkArgs) -> JsonResult {
-	utils::path_is_allowed_based_on_gitignore(&file)?;
+async fn run_write_chunk(path_env: &utils::PathEnv, WriteChunkArgs { file, replace_text, with_text }: WriteChunkArgs) -> JsonResult {
+	path_env.file_is_allowed(&file)?;
 
 	if replace_text.is_empty() {
 		return Err(format!("replace_text must not be empty"));

@@ -15,13 +15,13 @@ async fn main() -> anyhow::Result<()> {
 	// 	.init();
 
 	tokio::select! {
-		res = tokio::signal::ctrl_c() => {
+		result = tokio::signal::ctrl_c() => {
 			println!("ctrl+c received, popping the temp git checkpoint commit if there is one");
 			let _ = hard_reset_checkpoint_commit().await;
-			res?
+			result?
 		},
-		chat_res = chat_loop() => {
-			match chat_res {
+		result = chat_loop() => {
+			match result {
 				Ok(()) => {
 					// nothing to do in this case, everything succeeded, let's go home
 				},
@@ -43,9 +43,10 @@ struct ChatParams {
 	maxturns: usize,
 	shell_tools: HashMap<String, tools::ShellTool>,
 	check_command: Option<String>,
+	path_env: utils::PathEnv,
 }
 
-async fn create_new_chat() -> anyhow::Result<(ChatParams, genai::chat::ChatRequest)> {
+async fn create_new_chat(log_writer: &LogWriter) -> anyhow::Result<(ChatParams, genai::chat::ChatRequest)> {
 	let UserConfig { default_model, default_maxturns, tools: default_tools } = try_klungo_config().await?;
 	let instructions = tokio::fs::read_to_string("klungo.local.md").await
 		// TODO allow piping stdin at some point
@@ -69,9 +70,11 @@ async fn create_new_chat() -> anyhow::Result<(ChatParams, genai::chat::ChatReque
 		.unwrap_or(DEFAULT_MAXTURNS);
 
 	// TODO add allow and disallow
+	let path_env = utils::PathEnv::new()?;
 
 	let (shell_tools, chat_shell_tools) = default_tools.unwrap_or_default().into_iter().chain(instruction_tools.unwrap_or_default().into_iter())
-		.map(|m| tools::tool_general_shell(m)).collect::<Result<(HashMap<_, _>, Vec<_>), _>>()
+		.map(|m| tools::tool_general_shell(m))
+		.collect::<Result<(HashMap<_, _>, Vec<_>), _>>()
 		.map_err(|e| anyhow::anyhow!(e))?;
 
 	let mut all_tools = [
@@ -92,7 +95,11 @@ async fn create_new_chat() -> anyhow::Result<(ChatParams, genai::chat::ChatReque
 		.with_system(include_str!("./system.md"))
 		.with_tools(all_tools);
 
-	chat_req = chat_req.append_message(genai::chat::ChatMessage::user(text));
+	println!("tools: {}", serde_json::to_string_pretty(chat_req.tools.as_deref().unwrap_or_default()).unwrap());
+
+	let msg = genai::chat::ChatMessage::user(text);
+	log_writer.log_chat_message(msg.clone());
+	chat_req = chat_req.append_message(msg);
 
 	println!("using model {model}");
 	println!("using maxturns {maxturns}");
@@ -103,7 +110,7 @@ async fn create_new_chat() -> anyhow::Result<(ChatParams, genai::chat::ChatReque
 		println!("using check command {check_command}");
 	}
 
-	let instructions = ChatParams { model, maxturns, shell_tools, check_command };
+	let instructions = ChatParams { model, maxturns, shell_tools, check_command, path_env };
 	Ok((instructions, chat_req))
 }
 
@@ -127,9 +134,10 @@ async fn try_klungo_config() -> anyhow::Result<UserConfig> {
 		.context("wasn't able to parse .klungo.config.yml")
 }
 
-
 async fn chat_loop() -> anyhow::Result<()> {
-	let (mut p, mut chat_req) = create_new_chat().await?;
+	let log_writer = spawn_file_appender().await?;
+
+	let (mut p, mut chat_req) = create_new_chat(&log_writer).await?;
 
 	// we just use the out of the box genai behavior, and all its model/auth resolver magic
 	let client = genai::Client::new()?;
@@ -160,20 +168,21 @@ async fn chat_loop() -> anyhow::Result<()> {
 		// something fancy in the future would be to divide up the tools by the things they could effect (files, whatever)
 		// however that's easier said than done, since the tools the user specifies could mess things up
 		for tool_call in tool_calls.into_iter() {
-			let output = tools::run_tool(&tool_call, p.check_command.as_deref(), &p.shell_tools).await;
+			let output = tools::run_tool(&tool_call, p.check_command.as_deref(), &p.shell_tools, &p.path_env).await;
 
 			let tool_response = genai::chat::ToolResponse::from_tool_call(&tool_call, output.to_string());
 			tool_responses.push(tool_response);
 		}
 		// append this round to the history
-		chat_req = chat_req.append_message(
-			genai::chat::ChatMessage::assistant(content)
-				.with_reasoning_content(reasoning_content)
-		);
+		let msg = genai::chat::ChatMessage::assistant(content).with_reasoning_content(reasoning_content);
+		log_writer.log_chat_message(msg.clone());
+		chat_req = chat_req.append_message(msg);
 
 		// the llm is still doing things, so keep at it
 		if !tool_responses.is_empty() {
-			chat_req = chat_req.append_message(tool_responses);
+			let msg: genai::chat::ChatMessage = tool_responses.into();
+			log_writer.log_chat_message(msg.clone());
+			chat_req = chat_req.append_message(msg);
 			turn += 1;
 			continue;
 		}
@@ -190,7 +199,9 @@ async fn chat_loop() -> anyhow::Result<()> {
 				println!("check command {check_command} failed! sending the output back to klungo to try again");
 
 				let check_command_feedback = format!("the check command {check_command} failed.\nstdout:\n{stdout}\n\n\nstderr:\n{stderr}");
-				chat_req = chat_req.append_message(genai::chat::ChatMessage::user(check_command_feedback));
+				let msg = genai::chat::ChatMessage::user(check_command_feedback);
+				log_writer.log_chat_message(msg.clone());
+				chat_req = chat_req.append_message(msg);
 				turn += 1;
 				continue;
 			}
@@ -201,7 +212,7 @@ async fn chat_loop() -> anyhow::Result<()> {
 		const NOPE_REVERT: &'static str = "nope revert";
 		const TRY_AGAIN_ANEW: &'static str = "try again (start new chat from klungo.local.md)";
 		const TRY_AGAIN_FROM_HERE: &'static str = "try again (continue this chat)";
-		let options: Vec<&str> = vec![LOOKS_GOOD, NOPE_REVERT, TRY_AGAIN_FROM_HERE];
+		let options: Vec<&str> = vec![LOOKS_GOOD, NOPE_REVERT, TRY_AGAIN_ANEW, TRY_AGAIN_FROM_HERE];
 		let page_size = options.len();
 
 		let choice = inquire::Select::new("How's that?", options)
@@ -224,16 +235,18 @@ async fn chat_loop() -> anyhow::Result<()> {
 			TRY_AGAIN_ANEW => {
 				// this tries again and rereads klungo.local.md
 				hard_reset_checkpoint_commit().await?;
-				(p, chat_req) = create_new_chat().await?;
+				(p, chat_req) = create_new_chat(&log_writer).await?;
 				turn = 0;
 				continue;
 			},
 			TRY_AGAIN_FROM_HERE => {
 				// this tries again with the context we already have
 				hard_reset_checkpoint_commit().await?;
-				chat_req = chat_req.append_message(genai::chat::ChatMessage::user(
+				let msg = genai::chat::ChatMessage::user(
 					"I'm unsatisfied with that attempt. everything has been reverted, try again",
-				));
+				);
+				log_writer.log_chat_message(msg.clone());
+				chat_req = chat_req.append_message(msg);
 				turn = 0;
 				continue;
 			},
@@ -241,9 +254,7 @@ async fn chat_loop() -> anyhow::Result<()> {
 		}
 	}
 
-	// chat_req.messages.into_iter()
-	let chat_json = serde_json::to_vec_pretty(&chat_req.messages)?;
-	tokio::fs::write("klungo.output.local.json", chat_json).await?;
+	log_writer.finish().await;
 
 	if ran_out_of_turns {
 		return Err(anyhow::anyhow!("klungo failed to finish within the max turns: {}", p.maxturns))
@@ -252,10 +263,61 @@ async fn chat_loop() -> anyhow::Result<()> {
 	Ok(())
 }
 
+#[derive(Debug)]
+struct LogWriter {
+	sender: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+	handle: tokio::task::JoinHandle<()>,
+}
+
+impl LogWriter {
+	fn log_chat_message(&self, msg: genai::chat::ChatMessage) {
+		let msg = match serde_json::to_vec_pretty(&msg) {
+			Err(e) => { eprintln!("failed to serialize: {}", e); return; },
+			Ok(msg) => { msg },
+		};
+
+		if let Err(e) = self.sender.send(msg) {
+			eprintln!("failed to log chat message: {:?}", e.0);
+		}
+	}
+
+	// fn log_whatever(&self, msg: impl Into<Vec<u8>>)  {
+	// 	if let Err(e) = self.sender.send(msg.into()) {
+	// 		eprintln!("failed to log chat message: {}", String::from_utf8_lossy(&e.0));
+	// 	}
+	// }
+
+	async fn finish(self) {
+		let LogWriter { sender, handle } = self;
+		drop(sender);
+		let _ = handle.await;
+	}
+}
+
+async fn spawn_file_appender() -> anyhow::Result<LogWriter> {
+	let path = "klungo.output.local.json";
+	let mut file = tokio::fs::OpenOptions::new().create(true).truncate(true).write(true).open(path).await?;
+	let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+
+	let handle = tokio::spawn(async move {
+		use tokio::io::AsyncWriteExt;
+		while let Some(mut msg) = receiver.recv().await {
+			msg.push(b'\n');
+
+			let _ = file.write_all(&msg).await
+				.inspect_err(|e| eprintln!("failed to write to klungo.output.local.json: {e}"));
+			let _ = file.flush().await
+				.inspect_err(|e| eprintln!("failed to flush klungo.output.local.json: {e}"));
+		}
+	});
+
+	Ok(LogWriter { sender, handle })
+}
+
 // https://itnext.io/multitask-like-a-pro-with-the-wip-commit-2f4d40ca0192
 async fn push_checkpoint_commit() -> anyhow::Result<()> {
 	let output = tokio::process::Command::new("sh").arg("-c")
-		.arg("git add -A; git rm $(git ls-files --deleted) 2> /dev/null; git commit --no-verify --no-gpg-sign --message '--klungo-checkpoint--'")
+		.arg("git add -A; git rm $(git ls-files --deleted) 2> /dev/null; git status --porcelain || git commit --no-verify --no-gpg-sign -m '--klungo-checkpoint--'")
 		.output().await?;
 
 	utils::demand_command_success(output, "failed to push the temporary git checkpoint commit")
