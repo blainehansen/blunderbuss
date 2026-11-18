@@ -22,6 +22,21 @@ Don't want to read any more tedious walls of slop
 
 ## Philosophy
 
+
+If you use the other coding agents out there, you will be forced to deal with a bunch of unnecessary dark patterns that distract you from the only thing that matters (the code!) and instead push you into cognitive surrender and skill atrophy. These dark patterns are intentional, since the companies have an incentive to make your psychology and productivity dependent on them. They don't have to design assistants like naggy slot machines, but they do anyway.
+
+- **If you aren't running in yolo mode:** every 20 seconds or so you'll be nagged into giving permission to run a giant chunk of inscrutable bash or Python that is intentionally truncated and wrapped on one long line so you can't actually read and understand it.
+- **If you are running in yolo mode:** you expose yourself to myriad dangers, and of course you've been pushed to give up trying to understand or monitor the agent. You have to spend a bunch of time and effort sandboxing these tools in order to be relatively safe, but of course they can still use whatever tools you give to mess you up if they go off the rails.
+- Even after the task you wanted completed is complete, the agent will nag you to consider 5 more things, and the chat window stays open even if it isn't needed anymore.
+- Every request you make prompts a giant wall of text that distracts you from the code and exposes you to all the potential toxicity of trend slop and persuasion bombing and hallucination fatigue and gaslighting and sycophancy induced psychosis
+- By default you write in their tui, even though you're used to writing in your editor and are better and faster at doing so there. Pulling you away from your editor further pulls you away from the code and the workflow you've successfully used for years to build things
+
+LLMs are a cognitive minefield. If we decide to use LLMs at all, we have to design their harnesses to completely remove or mitigate the dangers
+
+
+
+
+
 LLM generated text is inherently a cognitive hazard. Being exposed to it for long periods mean you're drinking a tedious firehose of [bland stultifying mediocrity](https://archive.is/OPObK) ("trendslop") or [active manipulation](https://www.hbs.edu/ris/Publication%20Files/26-021_8db29bd1-04ed-4e98-86de-d286721afc7a.pdf) ("persuasion bombing"). There are very few situations where being exposed to LLM generated text is necessary or useful.
 
 Reading large amounts of LLM generated text is a waste of time. By mathematical definition LLM text has either extremely low information density, or is a wall of pointless detail and jargon intended to wear you down and make you stop thinking.

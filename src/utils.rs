@@ -38,6 +38,13 @@ pub fn default_dot() -> std::path::PathBuf {
 pub struct PathEnv {
 	cur: std::path::PathBuf,
 	gignore: ignore::gitignore::Gitignore,
+	// TODO when doing a read operation, yes all allow_read and allow_write, no (invert) all disallow_read
+	// TODO when doing a write operation, yes all allow_write, no (invert) all disallow_read and disallow_write
+
+	// allow_read: Option<Vec<String>>,
+	// allow_write: Option<Vec<String>>,
+	// disallow_read: Option<Vec<String>>,
+	// disallow_write: Option<Vec<String>>,
 }
 
 impl PathEnv {
@@ -54,15 +61,12 @@ impl PathEnv {
 	}
 
 	fn demand_path_is_relative<'p>(&self, path: &'p std::path::Path) -> Result<&'p std::path::Path, String> {
-		if path == "." { return Ok(path) }
-
 		if !path.has_root() {
 			return
-				if !path.components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+				if !path.components().all(|c| matches!(c, std::path::Component::Normal(_) | std::path::Component::CurDir)) {
 					Err(format!("path must be relative and simple: {}", path.display()))
 				}
 				else { Ok(path) }
-
 		}
 
 		path.strip_prefix(&self.cur)
@@ -92,7 +96,9 @@ impl PathEnv {
 fn test_file_is_allowed_yes() {
 	let path_env = PathEnv::new().unwrap();
 	assert!(path_env.file_is_allowed(std::path::Path::new("Cargo.toml")).is_ok());
+	assert!(path_env.dir_is_allowed(std::path::Path::new("./src/main.rs")).is_ok());
 	assert!(path_env.file_is_allowed(std::path::Path::new("src/main.rs")).is_ok());
+	assert!(path_env.dir_is_allowed(std::path::Path::new("src/./stuff/./hello")).is_ok());
 
 	assert!(path_env.file_is_allowed(std::path::Path::new("/home/blaine/lab/klungo/src/main.rs")).is_ok());
 
@@ -124,6 +130,8 @@ fn test_file_is_allowed_outside() {
 fn test_dir_is_allowed_yes() {
 	let path_env = PathEnv::new().unwrap();
 	assert!(path_env.dir_is_allowed(std::path::Path::new(".")).is_ok());
+	assert!(path_env.dir_is_allowed(std::path::Path::new("./src")).is_ok());
+	assert!(path_env.dir_is_allowed(std::path::Path::new("src/./stuff/./hello")).is_ok());
 	assert!(path_env.dir_is_allowed(std::path::Path::new("src")).is_ok());
 	assert!(path_env.dir_is_allowed(std::path::Path::new("something/cool/that/i/do/data")).is_ok());
 
@@ -161,4 +169,63 @@ pub fn demand_command_success(output: std::process::Output, ctx: &str) -> anyhow
 		return Err(anyhow::anyhow!("{ctx}\nstdout:\n{stdout}\n\nstderr:\n{stderr}"))
 	}
 	Ok(())
+}
+
+
+
+pub struct StrCursor<'a> {
+	rest: &'a str,
+}
+
+impl<'a> StrCursor<'a> {
+	pub fn new(input: &'a str) -> Self {
+		Self { rest: input }
+	}
+
+	pub fn remaining(&self) -> &'a str {
+		self.rest
+	}
+	pub fn into_remaining(self) -> &'a str {
+		self.rest
+	}
+
+	pub fn advance_to(&mut self, target: &str) -> Option<&'a str> {
+		let idx = self.rest.find(target)?;
+		let (skipped, remaining) = self.rest.split_at(idx);
+		self.rest = remaining;
+		Some(skipped)
+	}
+
+	pub fn advance_past(&mut self, target: &str) -> Option<&'a str> {
+		let idx = self.rest.find(target)?;
+		let skipped = &self.rest[..idx + target.len()];
+		self.rest = &self.rest[idx + target.len()..];
+		Some(skipped)
+	}
+}
+
+#[test]
+fn test_str_cursor() {
+	let mut cursor = StrCursor::new("aaa bbb aaa ccc");
+	assert_eq!(cursor.remaining(), "aaa bbb aaa ccc");
+
+	assert_eq!(cursor.advance_to("").unwrap(), "");
+	assert_eq!(cursor.remaining(), "aaa bbb aaa ccc");
+
+	assert_eq!(cursor.advance_past("").unwrap(), "");
+	assert_eq!(cursor.remaining(), "aaa bbb aaa ccc");
+
+	assert!(cursor.advance_to("nope").is_none());
+
+	assert_eq!(cursor.advance_to("bbb").unwrap(), "aaa ");
+	assert_eq!(cursor.remaining(), "bbb aaa ccc");
+
+	assert!(cursor.advance_past("blah").is_none());
+
+	assert_eq!(cursor.advance_past("aaa").unwrap(), "bbb aaa");
+	assert_eq!(cursor.remaining(), " ccc");
+
+	let mut cursor = StrCursor::new("aaa bbb aaa ccc");
+	assert_eq!(cursor.advance_past("ccc").unwrap(), "aaa bbb aaa ccc");
+	assert_eq!(cursor.remaining(), "");
 }

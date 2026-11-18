@@ -81,8 +81,9 @@ async fn create_new_chat(log_writer: &LogWriter) -> anyhow::Result<(ChatParams, 
 		// tool_tree(),
 		tools::tool_grep(),
 		tools::tool_read_file(),
-		tools::tool_create_file(),
-		tools::tool_write_chunk(),
+		tools::tool_write_file(),
+		tools::tool_replace_span(),
+		tools::tool_replace_section(),
 	].into_iter()
 		.chain(chat_shell_tools)
 		.collect::<Vec<_>>();
