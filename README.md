@@ -6,6 +6,9 @@
 
 Klungo is the LLM coding assistant for engineers who
 
+Cognition, understanding
+Are correctly paranoid
+
 - **Are sick of walls of slop.** A coding agent "talking" to you is completely unnecessary.
 - **Recognize that LLMs are inherently unreliable and dangerous.**
 - **Don't want to turn their brains off.**

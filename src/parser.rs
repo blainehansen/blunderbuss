@@ -16,6 +16,7 @@ pub struct RawParams {
 	pub disallow: Option<Vec<PermGlob>>,
 	pub maxturns: Option<usize>,
 	pub check: Option<String>,
+	pub ready: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]

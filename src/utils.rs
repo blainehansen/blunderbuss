@@ -162,15 +162,21 @@ fn test_dir_is_allowed_outside() {
 	assert!(path_env.file_is_allowed(std::path::Path::new("/home/klungo/not/where/we/are.json")).is_err());
 }
 
-pub fn demand_command_success(output: std::process::Output, ctx: &str) -> anyhow::Result<()> {
-	if !output.status.success() {
-		let stdout = String::from_utf8_lossy(&output.stdout);
-		let stderr = String::from_utf8_lossy(&output.stderr);
-		return Err(anyhow::anyhow!("{ctx}\nstdout:\n{stdout}\n\nstderr:\n{stderr}"))
-	}
-	Ok(())
+
+pub trait OutputExt {
+	fn demand_status_success(self, ctx: &str) -> anyhow::Result<std::process::Output>;
 }
 
+impl OutputExt for std::process::Output {
+	fn demand_status_success(self, ctx: &str) -> anyhow::Result<std::process::Output> {
+		if !self.status.success() {
+			let stdout = String::from_utf8_lossy(&self.stdout);
+			let stderr = String::from_utf8_lossy(&self.stderr);
+			return Err(anyhow::anyhow!("{ctx}\nstdout:\n{stdout}\n\nstderr:\n{stderr}"))
+		}
+		Ok(self)
+	}
+}
 
 
 pub struct StrCursor<'a> {

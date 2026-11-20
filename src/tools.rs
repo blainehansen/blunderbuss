@@ -52,8 +52,8 @@ pub async fn run_tool(
 			let check_command = check_command.unwrap();
 			print!("(check_command) `{check_command}`");
 			run_check_command(check_command).await
+				.inspect(|_| println!(" ✔️")).inspect_err(|_| println!(" ✖️"))
 				.map_err(utils::json_err)
-				.inspect(|_| println!(" ✔️"))
 				.into_ok_or_err()
 		},
 		unknown_tool => serde_json::json!({ "error": format!("unknown tool: {unknown_tool}") }),
@@ -67,8 +67,11 @@ async fn run_serde_tool<'e, T: for<'a> serde::Deserialize<'a>, O: Future<Output=
 	use async_result_ext::AsyncResultExt;
 	serde_json::from_value::<T>(raw_args).map_err(utils::json_err)
 		.inspect(inspect_fn)
-		.async_map(async |a| run_fn(path_env, a).await.map_err(utils::json_err).into_ok_or_err()).await
-		.inspect(|_| println!(" ✔️"))
+		.async_map(async |a|
+			run_fn(path_env, a).await
+			.inspect(|_| println!(" ✔️")).inspect_err(|_| println!(" ✖️"))
+			.map_err(utils::json_err).into_ok_or_err()
+		).await
 		.into_ok_or_err()
 }
 
@@ -98,7 +101,10 @@ pub fn tool_general_shell(shell_prefix: String) -> Result<((String, ShellTool), 
 	let shell_tool = ShellTool::from_vec(shell_prefix_split)
 		.ok_or_else(|| format!("{shell_prefix} is empty after splitting"))?;
 
-	let tool = genai::chat::Tool::new(&shell_prefix)
+	let re = regex::Regex::new(r"[^a-zA-Z0-9_-]+").unwrap();
+	let tool_name = re.replace_all(&shell_prefix, "_").into_owned();
+
+	let tool = genai::chat::Tool::new(&tool_name)
 		.with_description(format!("run the {shell_prefix} shell command, with possible extra arguments/text appended"))
 		.with_schema(serde_json::json!({
 			"type": "object",
@@ -110,7 +116,7 @@ pub fn tool_general_shell(shell_prefix: String) -> Result<((String, ShellTool), 
 			},
 		}));
 
-	Ok(((shell_prefix, shell_tool), tool))
+	Ok(((tool_name, shell_tool), tool))
 }
 async fn run_general_shell(shell_tool: &ShellTool, ShellCommandArgs { suffix }: ShellCommandArgs) -> JsonResult {
 	let mut cmd = tokio::process::Command::new(&shell_tool.first);
@@ -159,9 +165,12 @@ async fn run_check_command(check_command: &str) -> JsonResult {
 	else { Ok(serde_json::json!("check_command successful")) }
 }
 
+fn remove_schema_title(schema: &mut serde_json::Value) -> Option<()> {
+	schema.as_object_mut()?.remove("title");
+	Some(())
+}
 
 // #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-// #[schemars(rename = "tree arguments")]
 // struct Tree {
 // 	#[serde(default = "default_dot")]
 // 	dir: String,
@@ -177,7 +186,6 @@ async fn run_check_command(check_command: &str) -> JsonResult {
 // }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-#[schemars(rename = "grep arguments")]
 struct GrepArgs {
 	#[serde(default = "utils::default_dot")]
 	/// the dir to grep through, defaults to `.`
@@ -189,7 +197,9 @@ struct GrepArgs {
 // we can make this safe by putting the shlexed args it gives us *before* the ones we supply manually, since ripgrep says that the *last* instance of a flag wins
 // the only tricky thing is that there are flag versions of pattern... so I suppose instructions will have to be given to ensure it always gives a normal pattern
 pub fn tool_grep() -> genai::chat::Tool {
-	let schema = schemars::schema_for!(GrepArgs).to_value();
+	let mut schema = schemars::schema_for!(GrepArgs).to_value();
+	remove_schema_title(&mut schema);
+
 	genai::chat::Tool::new("grep")
 		.with_description("grep recursively through `dir` to find `pattern`, using ripgrep")
 		.with_schema(schema)
@@ -236,7 +246,6 @@ fn parse_grep_line(line: &str) -> Option<serde_json::Value> {
 
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-#[schemars(rename = "read_file arguments")]
 struct ReadFileArgs {
 	/// the path of the file to read
 	file: std::path::PathBuf,
@@ -248,7 +257,8 @@ struct ReadFileArgs {
 	// ending_at: Option<String>,
 }
 pub fn tool_read_file() -> genai::chat::Tool {
-	let schema = schemars::schema_for!(ReadFileArgs).to_value();
+	let mut schema = schemars::schema_for!(ReadFileArgs).to_value();
+	remove_schema_title(&mut schema);
 
 	genai::chat::Tool::new("read_file")
 		.with_description("read the contents of `file`")
@@ -266,7 +276,6 @@ async fn run_read_file(path_env: &utils::PathEnv, ReadFileArgs { file }: ReadFil
 
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-#[schemars(rename = "write_file arguments")]
 /// write `contents` to `file`, creating it if necessary
 struct WriteFileArgs {
 	/// the path of the file, will be created if it doesn't already exist
@@ -275,7 +284,8 @@ struct WriteFileArgs {
 	contents: String,
 }
 pub fn tool_write_file() -> genai::chat::Tool {
-	let schema = schemars::schema_for!(WriteFileArgs).to_value();
+	let mut schema = schemars::schema_for!(WriteFileArgs).to_value();
+	remove_schema_title(&mut schema);
 	genai::chat::Tool::new("write_file")
 		.with_schema(schema)
 }
@@ -299,7 +309,6 @@ async fn run_write_file(path_env: &utils::PathEnv, WriteFileArgs { file, content
 
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-#[schemars(rename = "replace_span arguments")]
 struct ReplaceSpanArgs {
 	/// the path of the file
 	file: std::path::PathBuf,
@@ -309,7 +318,8 @@ struct ReplaceSpanArgs {
 	next_span: String,
 }
 pub fn tool_replace_span() -> genai::chat::Tool {
-	let schema = schemars::schema_for!(ReplaceSpanArgs).to_value();
+	let mut schema = schemars::schema_for!(ReplaceSpanArgs).to_value();
+	remove_schema_title(&mut schema);
 	genai::chat::Tool::new("replace_span")
 		.with_description("in `file` replace all instances of `prev_span` with `next_span`")
 		.with_schema(schema)
@@ -337,8 +347,7 @@ async fn run_replace_span(path_env: &utils::PathEnv, ReplaceSpanArgs { file, pre
 
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-#[schemars(rename = "replace_section arguments")]
-/// replace a section of text in a file, marked by the lines immediately before and after it
+/// replace a section of text in a file, marked by anchors immediately before and after it
 struct ReplaceSectionArgs {
 	/// the path of the file
 	file: std::path::PathBuf,
@@ -354,7 +363,8 @@ struct ReplaceSectionArgs {
 	end_anchor: String,
 }
 pub fn tool_replace_section() -> genai::chat::Tool {
-	let schema = schemars::schema_for!(ReplaceSectionArgs).to_value();
+	let mut schema = schemars::schema_for!(ReplaceSectionArgs).to_value();
+	remove_schema_title(&mut schema);
 	genai::chat::Tool::new("replace_section")
 		.with_schema(schema)
 }
