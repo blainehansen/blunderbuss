@@ -68,7 +68,7 @@ async fn create_new_chat(
 		.or(default_model)
 		.ok_or_else(|| anyhow::anyhow!("you don't have a model specified! you have to either provide one using the `model` frontmatter param in klungo.local.md or `default_model` in ~/.klungo.config.yml"))?;
 
-	const DEFAULT_MAXTURNS: usize = 20;
+	const DEFAULT_MAXTURNS: usize = 100;
 	let maxturns = maxturns
 		.or(default_maxturns)
 		.unwrap_or(DEFAULT_MAXTURNS);

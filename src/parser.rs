@@ -10,11 +10,11 @@ use nom_language::error::{VerboseError, convert_error};
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawParams {
-	pub tools: Option<Vec<String>>,
 	pub model: Option<String>,
+	pub maxturns: Option<usize>,
+	pub tools: Option<Vec<String>>,
 	pub allow: Option<Vec<PermGlob>>,
 	pub disallow: Option<Vec<PermGlob>>,
-	pub maxturns: Option<usize>,
 	pub check: Option<String>,
 	pub ready: Option<String>,
 }
