@@ -1,55 +1,50 @@
-# Klungo
+# Blunderbuss
 
 ## An LLM coding harness designed as if your safety and cognition actually matter
 
-The most dangerous thing about any tool isn't what is literally does, but whether you *misunderstand* what it does. People are perfectly capable of using dangerous tools safely, but only if they *know the tool is dangerous and treat it accordingly.* Klungo has been designed to both signal to you that it's dangerous, and to help you use it safely.
+> LLMs aren't partners or colleagues or advisors or underlings or any other kind of embodied mind. They're tools, but stochastic and unreliable ones. They're like a [blunderbuss](https://en.wikipedia.org/wiki/Blunderbuss) you pack with nails and glass and hope the scatter hits your target.
 
-<!-- https://en.wikipedia.org/wiki/Blunderbuss -->
+![king k rool with blunderbuss](https://static.wikia.nocookie.net/donkeykong/images/a/a6/Kaptain_k_rool_1.jpg/revision/latest/scale-to-width-down/300?cb=20210112164313)
 
-<!-- LLMs aren't partners or colleagues or advisors or underlings or any other kind of embodied mind. They're tools, albeit stochastic and unreliable ones. They're like a blunderbuss you pack with nails and hope the projectile scatter hits your target. -->
+Blunderbuss is a coding harness that acknowledges LLMs are dangerous, not just because they often [take unexpected destructive action](https://airisk.mit.edu/ai-incident-tracker/incident-timeline), but because they're cognitively toxic. They [encourage cognitive debt](https://www.mdpi.com/2075-4698/15/1/6), [push you towards mediocrity](https://archive.is/OPObK), [encourage your delusions](https://www.science.org/doi/10.1126/science.aec8352), and [gaslight you when you push back](https://www.hbs.edu/ris/Publication%20Files/26-021_8db29bd1-04ed-4e98-86de-d286721afc7a.pdf).
 
-The major coding harnesses are dark patterns all the way down: barraging you with walls of slop; encouraging cognitive offloading; nagging you into approving unsafe globs of bash; prompting you to work an unhealthy amount.
+If you want a full discussion of the philosophy and design of blunderbuss, read this blog post:
 
-Klungo has a few specific design decisions intended to prove using LLMs for coding doesn't have to be unhealthy and unsafe, and so expose the dark patterns as abusive business practices rather than the inevitable march of technology.
+[Blunderbuss: the non-toxic LLM coding harness](https://blainehansen.me/post/blunderbuss/)
 
-- **Editor-oriented instructions:** When using klungo you write all instructions and config in `klungo.local.md`, rather than typing them in a (buggy and temperamental) terminal app. This keeps you working in your strongest environment, the editor, engaged with the code, rather than falling asleep at the wheel as so many are now doing.
-- **Allow list permissioning:** Klungo only has access to the bash tools you have explicitly allowed, and can't access any files in any way other than those in the current working directory that aren't ignored by git. This means you'll never be nagged every 30 seconds to approve some inscrutable glob of bash or python, and you don't have to stay glued to your terminal to keep the harness making progress. "YOLO mode" was always been a way to gaslight us. We don't have to choose between safety and convenience!
-- **`git`-based checkpointing:** When klungo begins a task it creates a cheap temporary work-in-progress git commit to ensure you can easily separate the changes it makes from those you already had in your working tree. Using git keeps the harness much simpler and ensures *every* change is reversible, even those made by bash commands. When klungo finishes with your task you'll be asked whether to keep the changes, or some combination of reverting them or trying again, and in all cases the work-in-progress commit will be removed.
-- **No walls of slop:** Klungo will just silently work on your task, and when the task is done you'll be met with a clean simple selector for what to do with the changes it's made, rather than an LLM generated summary. This protects you from the twin dangers of [sycophancy]() and [persuasion bombing](), and from the fatigue that inevitably comes when reading the dreary pablum that LLMs are mathematically guaranteed to produce.
-- **No extended conversation:** Klungo is intentionally designed in an "all or nothing" manner. You describe a task, it attempts that task, and you either keep what it did, throw it away and do it yourself, or have it try again fresh (maybe with updated instructions). This is intentionally limited, to avoid such productivity and mind-killing traps as [futzing](), [anthropomorphization](), and [automation bias]().
+## Main design decisions
 
-<!-- https://blog.glyph.im/2025/08/futzing-fraction.html
-https://dan.glass/2025/08/20/ai-coding-efficiency-part-one-glyphs-futzing-fraction/ -->
+- **Editor-oriented:** When using blunderbuss you write all instructions and config in `blunderbuss.local.md`, rather than typing them in a (buggy and temperamental) terminal app. This keeps you working in your strongest environment, the editor, engaged with the code, rather than falling asleep at the wheel as so many are now doing.
+- **Allowlist permissioning:** Blunderbuss only has access to the bash tools you have explicitly allowed, and can't access any files other than those tracked by git in the current working directory. This means you won't be nagged every 30 seconds to approve some inscrutable glob of bash or python, and you don't have to stay glued to your terminal to keep the harness making progress.
+- **`git`-based checkpointing:** When blunderbuss begins a task it creates a cheap "work-in-progress" git commit to ensure you can easily separate the changes it makes from those you already had in your working tree. Using git keeps the harness much simpler and ensures *every* change is reversible, even those made by bash commands. When blunderbuss finishes with your task you'll be asked whether to keep the changes, or some combination of reverting them or trying again, and in all cases the work-in-progress commit will be removed.
+- **No walls of slop:** Blunderbuss will just silently work on your task, and when the task is done you'll be met with a clean simple selector for what to do with the changes it's made, rather than an LLM generated summary. This protects you from the twin dangers of [sycophancy](https://www.science.org/doi/10.1126/science.aec8352) and [persuasion bombing](https://www.hbs.edu/ris/Publication%20Files/26-021_8db29bd1-04ed-4e98-86de-d286721afc7a.pdf), and from the fatigue that inevitably comes when reading the dreary pablum that LLMs are mathematically guaranteed to produce.
+- **No extended conversation:** Blunderbuss is intentionally designed in an "all or nothing" manner. You describe a task, it attempts that task, and you either keep what it did, throw it away and do it yourself, or have it try again fresh (maybe with updated instructions). This is intentionally limited, to avoid such productivity and mind-killing traps as [futzing](https://blog.glyph.im/2025/08/futzing-fraction.html), [anthropomorphization](https://en.wikipedia.org/wiki/ELIZA_effect), and [automation bias](https://en.wikipedia.org/wiki/Automation_bias).
 
-Read the below blog post for an in-depth discussion of the philosophy and design decisions behind klungo.
-
-[Klungo: the non-toxic LLM coding harness](https://blainehansen.me/post/klungo/)
-
-## Klungo is human-made
+## Blunderbuss is human-made
 
 [![brainmade.org](https://img.shields.io/badge/brainmade.org-FFFFFF?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxZW0iIGhlaWdodD0iNzkiIHZpZXdCb3g9IjAgMCA2NyA3OSIgZmlsbD0ibm9uZSI%2BPHBhdGggZmlsbD0iIzAwMCIgZD0iTTUyLjYxMiA3OC43ODJIMjMuMzNhMi41NTkgMi41NTkgMCAwIDEtMi41Ni0yLjU1OHYtNy42NzdoLTcuOTczYTIuNTYgMi41NiAwIDAgMS0yLjU2LTIuNTZWNTUuMzE1bC04LjgyLTQuMzk3YTIuNTU5IDIuNTU5IDAgMCAxLS45ODYtMy43MWw5LjgwNy0xNC43MTR2LTQuMzVDMTAuMjQgMTIuNTk5IDIyLjg0MyAwIDM4LjM4OCAwIDUzLjkzMiAwIDY2LjUzNCAxMi42IDY2LjUzOCAyOC4xNDNjLS42MzIgMjcuODI0LTEwLjc2IDIzLjUxNi0xMS4xOCAzNC4wNDVsLS4xODcgMTQuMDM1YTIuNTkgMi41OSAwIDAgMS0uNzUgMS44MSAyLjU1IDIuNTUgMCAwIDEtMS44MDkuNzVabS0yNi43MjMtNS4xMTdoMjQuMTY0bC4yODYtMTQuNTQyYy0uMjYzLTYuNjU2IDExLjcxNi04LjI0MyAxMS4wOC0zMC43MzQtLjM1OC0xMi43MTMtMTAuMzEzLTIzLjI3MS0yMy4wMzEtMjMuMjcxLTEyLjcxOCAwLTIzLjAyOSAxMC4zMDctMjMuMDMyIDIzLjAyNXY1LjExN2MwIC41MDYtLjE1IDEtLjQzIDEuNDJsLTguNjMgMTIuOTQxIDcuNjQ1IDMuODJhMi41NTkgMi41NTkgMCAwIDEgMS40MTUgMi4yOTF2OS42OTdoNy45NzRhMi41NTkgMi41NTkgMCAwIDEgMi41NiAyLjU1OXY3LjY3N1oiLz48cGF0aCBmaWxsPSIjMDAwIiBkPSJNNDAuMzcyIDU4LjIyMlYzOC45MzRjLjExOCAwIC4yMzcuMDE4LjM1NS4wMTggOS43NjktLjAxMiAxNy4wNS05LjAxMiAxNS4wMjItMTguNTY3YTIuMzY2IDIuMzY2IDAgMCAwLTEuODIxLTEuODIyYy04LjEwNi0xLjczLTE2LjEyMSAzLjI5Mi0xOC4wOTggMTEuMzQxLS4wMjQtLjAyNC0uMDQzLS4wNS0uMDY2LS4wNzNhMTUuMzIzIDE1LjMyMyAwIDAgMC0xNC4wNi00LjE3IDIuMzY1IDIuMzY1IDAgMCAwLTEuODIxIDEuODJjLTIuMDI4IDkuNTU1IDUuMjUyIDE4LjU1NCAxNS4wMiAxOC41NjguMjM2IDAgLjQ5Mi0uMDI4LjczOC0uMDR2MTIuMjEzaDQuNzMxWm0yLjgzOS0zMi4xNDNhMTAuNjQ2IDEwLjY0NiAwIDAgMSA4LjEyNC0zLjEwNmMuMzUgNi4zNC00Ljg4OCAxMS41NzctMTEuMjI4IDExLjIzYTEwLjU4IDEwLjU4IDAgMCAxIDMuMTA0LTguMTI0Wk0yNy40MDMgMzguMTkzYTEwLjYwNyAxMC42MDcgMCAwIDEtMy4xMTgtOC4xMjNjNi4zNDQtLjM1OCAxMS41ODcgNC44ODYgMTEuMjI4IDExLjIzLTMuMDIzLjE2OS01Ljk3My0uOTYxLTguMTEtMy4xMDdaIi8%2BPC9zdmc%2B)](https://brainmade.org/)
 
-I appreciate the irony of directly coding a new LLM coding harness rather than using a harness, but since the whole point of this project is that existing harnesses are unhealthy and unsafe, it felt like the right choice. Aside from using search tools like perplexity, I created klungo without any LLM assistance.
+I appreciate the irony of directly coding a new LLM coding harness rather than using a harness, but since the whole point of this project is that existing harnesses are unhealthy and unsafe, it felt like the right choice. Aside from using search tools like perplexity, I created blunderbuss without any LLM assistance.
 
-Besides, I wanted to learn more about how to build an LLM harness of any kind, and I don't believe for a second anyone can actually learn much of anything if they they're just reading summaries. I learned a lot doing it this way!
+Besides, I wanted to explore the actual mechanics of building an LLM harness in Rust, and I don't believe for a second anyone can actually learn much of anything if they they're just reading summaries. I learned a lot doing it this way!
 <!-- TODO citation for people learning -->
 
-In this spirit, this project is heavily biased against LLM-generated contributions. PRs that are clearly fully LLM generated won't be accepted, and especially if your [descriptive text](https://rfd.shared.oxide.computer/rfd/0576#_llms_as_writers) such as PR description or comments are LLM-generated you will be banned. Even if you use LLMs to help create a PR, it must be elegant, clear, and succinctly explained.
+In this spirit and since I want this project to remain legible and concise, I'm heavily biased against LLM-generated contributions. PRs that are clearly fully LLM generated won't be accepted, and especially if your [descriptive text](https://rfd.shared.oxide.computer/rfd/0576#_llms_as_writers) such as PR description or comments are LLM-generated you will be banned. Even if you use LLMs to help create a PR, it must be elegant, clear, and succinctly explained.
 
 ## Usage
 
 Install using `cargo`:
 
 ```sh
-cargo install klungo
+cargo install blunderbuss
 ```
 
-Klungo always reads `klungo.local.md` to get its instructions (putting `*.local.*` in your `.gitignore` is probably a good idea), and is invoked as `klg`.
+Blunderbuss always reads `blunderbuss.local.md` to get its instructions (putting `*.local.*` in your `.gitignore` is probably a good idea), and is invoked as `blb`.
 
 ```sh
-echo "Fix the tests" > klungo.local.md
-klg
-# klungo works for a while
+echo "Fix the tests" > blunderbuss.local.md
+blb
+# blunderbuss works for a while
 # then a simple selection menu appears asking
 > looks good
 > nope revert
@@ -57,9 +52,9 @@ klg
 > try again
 ```
 
-### `klungo.local.md` (session instructions)
+### `blunderbuss.local.md` (task instructions)
 
-`klungo.local.md` is structured as a markdown file with [yaml frontmatter](https://openmarkapp.com/blog/markdown-frontmatter-yaml) where you specify config for the task.
+`blunderbuss.local.md` is a markdown file with [yaml frontmatter](https://openmarkapp.com/blog/markdown-frontmatter-yaml) where you specify config for the task.
 
 Here's a quick example, and below we'll go through each option.
 
@@ -74,7 +69,7 @@ ready: git diff > ~/Desktop/diff.txt && ${EDITOR} ~/Desktop/diff.txt
 maxturns: 30
 ---
 
-Here are the instructions that will be given to klungo!
+Here are the instructions that will be given to blunderbuss!
 
 It's a full markdown file, so write whatever you please.
 ```
@@ -84,12 +79,12 @@ disallow:
 -->
 
 - **`model`:** Specifies the model to use for this task, with a provider specified before the `::`. Full reference for available providers [given at the end of this page](#model-resolution-and-auth). *must be specified either here in user level config*
-- **`tools`:** List of commands to allow klungo to use as tools. Both the prefix you give and the suffix given by klungo will be *separately* passed through [shlex](https://docs.rs/shlex/latest/shlex/), meaning arbitrary bash constructs can't be used and your prefix can't be modified into any other command (such as could happen if `tree` could be modified to `tree_spy.sh`). Be careful with these tools! Remember that any subcommand of the prefix you pass is now something klungo can call!
-- **`check`:** A command that must pass in the exact form specified before the task will be considered successful. Klungo cannot append any arguments to it, and a new turn will kick off with the failing output if it doesn't pass. It is also made available as a tool klungo can call at any time.
+- **`tools`:** List of commands to allow blunderbuss to use as tools. Both the prefix you give and the suffix given by blunderbuss will be *separately* passed through [shlex](https://docs.rs/shlex/latest/shlex/), meaning arbitrary bash constructs can't be used and your prefix can't be modified into any other command (such as could happen if `tree` could be modified to `tree_spy.sh`). Be careful with these tools! Remember that any subcommand of the prefix you pass is now something blunderbuss can call!
+- **`check`:** A command that must pass in the exact form specified before the task will be considered successful. Blunderbuss cannot append any arguments to it, and a new turn will kick off with the failing output if it doesn't pass. It is also made available as a tool blunderbuss can call at any time.
 - **`ready`:** A command that will be called once the task has completed successfully. This is not made available as a tool.
-- **`maxturns`:** The maximum number of ["conversation turns"](https://www.developersdigest.tech/glossary/max-turns) klungo can go through before it is forced to stop. This is an error condition, and so will cause klungo's changes to be reverted. *default 100*
+- **`maxturns`:** The maximum number of ["conversation turns"](https://www.developersdigest.tech/glossary/max-turns) blunderbuss can go through before it is forced to stop. This is an error condition, and so will cause blunderbuss's changes to be reverted. *default 100*
 
-### `~/.klungo.config.yml` (user level config)
+### `~/.blunderbuss.config.yml` (user level config)
 
 ```yaml
 # user level default for `model`
@@ -144,7 +139,7 @@ api_keys:
 
 ### Model resolution and auth
 
-The `genai` crate underlying klungo allows lots of providers out of the box. You can read their full docs here:
+The `genai` crate underlying blunderbuss allows lots of providers out of the box. You can read their full docs here:
 
 https://github.com/jeremychone/rust-genai#model-to-adapter-resolution
 
@@ -152,7 +147,7 @@ Or look at the source code for the adapter definitions here:
 
 https://github.com/jeremychone/rust-genai/blob/v0.7.5/src/adapter/adapter_kind.rs#L184
 
-Here's a reference table for all the provider prefixes and their associated api key names, which you can provide either in `~/.klungo.config.yml` or as an env var.
+Here's a reference table for all the provider prefixes and their associated api key names, which you can provide either in `~/.blunderbuss.config.yml` or as an env var.
 
 | provider prefix | api key name |
 |---|---|
@@ -214,5 +209,6 @@ fn main() {
 ## Roadmap
 
 - [ ] Add `allow` and `deny` to task config, to change file-level permissions rather than only using `.gitignore`.
+- [ ] Create eval suite.
 - [ ] Add ability to read web pages at explicitly allowed URLs.
 - [ ] Change `model` to allow a list of models that will be rotated through when rate limits are hit.

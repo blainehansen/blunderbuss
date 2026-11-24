@@ -51,10 +51,10 @@ struct ChatParams {
 async fn create_new_chat(
 	log_writer: &LogWriter,
 ) -> anyhow::Result<(ChatParams, genai::chat::ChatRequest, genai::Client)> {
-	let UserConfig { default_model, default_maxturns, tools: default_tools, api_keys } = try_klungo_config().await?;
-	let instructions = tokio::fs::read_to_string("klungo.local.md").await
+	let UserConfig { default_model, default_maxturns, tools: default_tools, api_keys } = try_blunderbuss_config().await?;
+	let instructions = tokio::fs::read_to_string("blunderbuss.local.md").await
 		// TODO allow piping stdin at some point
-		.map_err(|e| anyhow::anyhow!("couldn't read the klungo.local.md file, which is the whole way klungo works!: {e}"))?;
+		.map_err(|e| anyhow::anyhow!("couldn't read the blunderbuss.local.md file, which is the whole way blunderbuss works!: {e}"))?;
 
 	let (
 		parser::RawParams {
@@ -66,7 +66,7 @@ async fn create_new_chat(
 
 	let model = model
 		.or(default_model)
-		.ok_or_else(|| anyhow::anyhow!("you don't have a model specified! you have to either provide one using the `model` frontmatter param in klungo.local.md or `default_model` in ~/.klungo.config.yml"))?;
+		.ok_or_else(|| anyhow::anyhow!("you don't have a model specified! you have to either provide one using the `model` frontmatter param in blunderbuss.local.md or `default_model` in ~/.blunderbuss.config.yml"))?;
 
 	const DEFAULT_MAXTURNS: usize = 100;
 	let maxturns = maxturns
@@ -146,17 +146,17 @@ struct UserConfig {
 	api_keys: Option<HashMap<String, String>>,
 }
 
-async fn try_klungo_config() -> anyhow::Result<UserConfig> {
-	let klungo_config_path = std::env::home_dir().unwrap_or("~/".into()).join(".klungo.config.yml");
-	if !tokio::fs::try_exists(&klungo_config_path).await.unwrap_or(false) {
+async fn try_blunderbuss_config() -> anyhow::Result<UserConfig> {
+	let blunderbuss_config_path = std::env::home_dir().unwrap_or("~/".into()).join(".blunderbuss.config.yml");
+	if !tokio::fs::try_exists(&blunderbuss_config_path).await.unwrap_or(false) {
 		return Ok(UserConfig::default())
 	}
 
-	let file_contents = tokio::fs::read_to_string(klungo_config_path).await
-		.context("wasn't able to read .klungo.config.yml even though it exists?")?;
+	let file_contents = tokio::fs::read_to_string(blunderbuss_config_path).await
+		.context("wasn't able to read .blunderbuss.config.yml even though it exists?")?;
 
 	yaml_serde::from_str(&file_contents)
-		.context("wasn't able to parse .klungo.config.yml")
+		.context("wasn't able to parse .blunderbuss.config.yml")
 }
 
 async fn chat_loop() -> anyhow::Result<()> {
@@ -180,6 +180,7 @@ async fn chat_loop() -> anyhow::Result<()> {
 				backon::ExponentialBuilder::default()
 					.with_min_delay(std::time::Duration::from_secs(20))
 					.with_max_delay(std::time::Duration::from_secs(120))
+					.with_max_times(10)
 			)
 			.when(genai_error_is_retryable)
 			.notify(|err, dur| {
@@ -217,14 +218,14 @@ async fn chat_loop() -> anyhow::Result<()> {
 
 		// there aren't any more calls (and therefore any more responses), the llm says its done
 		if let Some(check_command) = &p.check_command {
-			println!("klungo says it's finished, running your check command {check_command}");
+			println!("blunderbuss says it's finished, running your check command {check_command}");
 			let output = tokio::process::Command::new("sh").arg("-c").arg(check_command)
 				.output().await.with_context(|| format!("wasn't able to call sh -c '{check_command}'"))?;
 
 			if !output.status.success() {
 				let stdout = String::from_utf8_lossy(&output.stdout);
 				let stderr = String::from_utf8_lossy(&output.stderr);
-				println!("check command {check_command} failed! sending the output back to klungo to try again");
+				println!("check command {check_command} failed! sending the output back to blunderbuss to try again");
 
 				let check_command_feedback = format!("the check command {check_command} failed.\nstdout:\n{stdout}\n\n\nstderr:\n{stderr}");
 				let msg = genai::chat::ChatMessage::user(check_command_feedback);
@@ -242,11 +243,12 @@ async fn chat_loop() -> anyhow::Result<()> {
 				.output().await.with_context(|| format!("wasn't able to call sh -c '{ready_command}'"))?;
 		}
 
-		const LOOKS_GOOD: &'static str = "looks good (will remove the klungo checkpoint commit and mix klungo's changes in with yours)";
-		const NOPE_REVERT: &'static str = "nope revert (will *hard* git reset and remove the klungo checkpoint commit)";
-		const TRY_AGAIN_ANEW: &'static str = "try again (will *hard* git reset and start a new chat from klungo.local.md)";
-		const TRY_AGAIN_FROM_HERE: &'static str = "try again (continue from this existing context)";
-		let options: Vec<&str> = vec![LOOKS_GOOD, NOPE_REVERT, TRY_AGAIN_ANEW, TRY_AGAIN_FROM_HERE];
+		const LOOKS_GOOD: &'static str = "looks good (will remove the blunderbuss checkpoint commit and mix blunderbuss's changes in with yours)";
+		const NOPE_REVERT: &'static str = "nope revert (will *hard* git reset and remove the blunderbuss checkpoint commit)";
+		const TRY_AGAIN_ANEW: &'static str = "try again (will *hard* git reset and start a new chat from blunderbuss.local.md)";
+		// const TRY_AGAIN_FROM_HERE: &'static str = "try again (continue from this existing context)";
+		// let options: Vec<&str> = vec![LOOKS_GOOD, NOPE_REVERT, TRY_AGAIN_ANEW, TRY_AGAIN_FROM_HERE];
+		let options: Vec<&str> = vec![LOOKS_GOOD, NOPE_REVERT, TRY_AGAIN_ANEW];
 		let page_size = options.len();
 
 		let choice = inquire::Select::new("How's that?", options)
@@ -267,23 +269,23 @@ async fn chat_loop() -> anyhow::Result<()> {
 				break;
 			},
 			TRY_AGAIN_ANEW => {
-				// this tries again and rereads klungo.local.md
+				// this tries again and rereads blunderbuss.local.md
 				hard_reset_and_pop_checkpoint_commit().await?;
 				(p, chat_req, client) = create_new_chat(&log_writer).await?;
 				turn = 0;
 				continue;
 			},
-			TRY_AGAIN_FROM_HERE => {
-				// this tries again with the context we already have
-				hard_reset_and_pop_checkpoint_commit().await?;
-				let msg = genai::chat::ChatMessage::user(
-					"I'm unsatisfied with that attempt. everything has been reverted, try again",
-				);
-				log_writer.log_serde(&msg);
-				chat_req = chat_req.append_message(msg);
-				turn = 0;
-				continue;
-			},
+			// TRY_AGAIN_FROM_HERE => {
+			// 	// this tries again with the context we already have
+			// 	hard_reset_and_pop_checkpoint_commit().await?;
+			// 	let msg = genai::chat::ChatMessage::user(
+			// 		"I'm unsatisfied with that attempt. everything has been reverted, try again",
+			// 	);
+			// 	log_writer.log_serde(&msg);
+			// 	chat_req = chat_req.append_message(msg);
+			// 	turn = 0;
+			// 	continue;
+			// },
 			unknown => { return Err(anyhow::anyhow!("how did you choose this? {unknown}")) }
 		}
 	}
@@ -291,7 +293,7 @@ async fn chat_loop() -> anyhow::Result<()> {
 	log_writer.finish().await;
 
 	if ran_out_of_turns {
-		return Err(anyhow::anyhow!("klungo failed to finish within the max turns: {}", p.maxturns))
+		return Err(anyhow::anyhow!("blunderbuss failed to finish within the max turns: {}", p.maxturns))
 	}
 
 	Ok(())
@@ -305,7 +307,7 @@ struct LogWriter {
 
 impl LogWriter {
 	async fn spawn_new() -> anyhow::Result<LogWriter> {
-		let path = "klungo.output.local.yml";
+		let path = "blunderbuss.output.local.yml";
 		let mut file = tokio::fs::OpenOptions::new().create(true).truncate(true).write(true).open(path).await?;
 		let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
 
@@ -315,9 +317,9 @@ impl LogWriter {
 				msg.extend_from_slice(b"\n---\n\n");
 
 				let _ = file.write_all(&msg).await
-					.inspect_err(|e| eprintln!("failed to write to klungo.output.local.yml: {e}"));
+					.inspect_err(|e| eprintln!("failed to write to blunderbuss.output.local.yml: {e}"));
 				let _ = file.flush().await
-					.inspect_err(|e| eprintln!("failed to flush klungo.output.local.yml: {e}"));
+					.inspect_err(|e| eprintln!("failed to flush blunderbuss.output.local.yml: {e}"));
 			}
 		});
 
@@ -346,31 +348,31 @@ impl LogWriter {
 	}
 }
 
-/// push the klungo checkpoint commit if there are existing uncommitted changes
-/// this is to allow the user to cleanly separate klungo's changes from their existing ones
+/// push the blunderbuss checkpoint commit if there are existing uncommitted changes
+/// this is to allow the user to cleanly separate blunderbuss's changes from their existing ones
 async fn push_checkpoint_commit() -> anyhow::Result<()> {
 	// the if statement short circuits with a successful status code if there are no changes
 	// if the git commit sequence happens the status code of that is passed through
 	tokio::process::Command::new("sh").arg("-c")
-		.arg(r#"if [ -n "$(git status --porcelain)" ]; then git add -A; git commit --no-verify --no-gpg-sign -m '--klungo-checkpoint--'; fi"#)
+		.arg(r#"if [ -n "$(git status --porcelain)" ]; then git add -A; git commit --no-verify --no-gpg-sign -m '--blunderbuss-checkpoint--'; fi"#)
 		.output().await?.demand_status_success("failed to push the temporary git checkpoint commit")?;
 
 	Ok(())
 }
-/// get rid of the klungo checkpoint commit so that the changes made by the llm are mixed in with the ones the user had previously
-/// if there isn't a klungo commit the status of the commit will be unsuccessful, but that's fine
+/// get rid of the blunderbuss checkpoint commit so that the changes made by the llm are mixed in with the ones the user had previously
+/// if there isn't a blunderbuss commit the status of the commit will be unsuccessful, but that's fine
 async fn pop_checkpoint_commit() -> anyhow::Result<()> {
 	tokio::process::Command::new("sh").arg("-c")
-		.arg(r#"if [[ $(git log -1 --pretty=%s) == "--klungo-checkpoint--" ]]; then git reset HEAD~1; fi"#)
-		.output().await?.demand_status_success("failed to remove klungo checkpoint")?;
+		.arg(r#"if [[ $(git log -1 --pretty=%s) == "--blunderbuss-checkpoint--" ]]; then git reset HEAD~1; fi"#)
+		.output().await?.demand_status_success("failed to remove blunderbuss checkpoint")?;
 
 	Ok(())
 }
-/// remove all changes klungo made and get rid of the klungo checkpoint commit if there is one
+/// remove all changes blunderbuss made and get rid of the blunderbuss checkpoint commit if there is one
 async fn hard_reset_and_pop_checkpoint_commit() -> anyhow::Result<()> {
 	tokio::process::Command::new("sh").arg("-c")
 		.arg(r#"git reset --hard HEAD && git clean -fd"#)
-		.output().await?.demand_status_success("failed to reset klungo's changes")?;
+		.output().await?.demand_status_success("failed to reset blunderbuss's changes")?;
 
 	pop_checkpoint_commit().await?;
 

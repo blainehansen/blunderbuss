@@ -100,7 +100,7 @@ fn test_file_is_allowed_yes() {
 	assert!(path_env.file_is_allowed(std::path::Path::new("src/main.rs")).is_ok());
 	assert!(path_env.dir_is_allowed(std::path::Path::new("src/./stuff/./hello")).is_ok());
 
-	assert!(path_env.file_is_allowed(std::path::Path::new("/home/blaine/lab/klungo/src/main.rs")).is_ok());
+	assert!(path_env.file_is_allowed(std::path::Path::new("/home/blaine/lab/blunderbuss/src/main.rs")).is_ok());
 
 	assert!(path_env.file_is_allowed(std::path::Path::new("something/cool/that/i/do/data.json")).is_ok());
 }
@@ -113,7 +113,7 @@ fn test_file_is_allowed_no() {
 
 	assert!(path_env.file_is_allowed(std::path::Path::new("target")).is_err());
 	assert!(path_env.file_is_allowed(std::path::Path::new("target/release")).is_err());
-	assert!(path_env.file_is_allowed(std::path::Path::new("target/release/klungo")).is_err());
+	assert!(path_env.file_is_allowed(std::path::Path::new("target/release/blunderbuss")).is_err());
 }
 
 #[test]
@@ -122,8 +122,8 @@ fn test_file_is_allowed_outside() {
 	assert!(path_env.file_is_allowed(std::path::Path::new("../../not/where/we/are")).is_err());
 	assert!(path_env.file_is_allowed(std::path::Path::new("../../not/where/we/are.json")).is_err());
 
-	assert!(path_env.file_is_allowed(std::path::Path::new("/home/klungo/not/where/we/are")).is_err());
-	assert!(path_env.file_is_allowed(std::path::Path::new("/home/klungo/not/where/we/are.json")).is_err());
+	assert!(path_env.file_is_allowed(std::path::Path::new("/home/blunderbuss/not/where/we/are")).is_err());
+	assert!(path_env.file_is_allowed(std::path::Path::new("/home/blunderbuss/not/where/we/are.json")).is_err());
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn test_dir_is_allowed_yes() {
 	assert!(path_env.dir_is_allowed(std::path::Path::new("src")).is_ok());
 	assert!(path_env.dir_is_allowed(std::path::Path::new("something/cool/that/i/do/data")).is_ok());
 
-	assert!(path_env.file_is_allowed(std::path::Path::new("/home/blaine/lab/klungo/src")).is_ok());
+	assert!(path_env.file_is_allowed(std::path::Path::new("/home/blaine/lab/blunderbuss/src")).is_ok());
 
 	assert!(path_env.dir_is_allowed(std::path::Path::new("Cargo.toml")).is_ok());
 	assert!(path_env.dir_is_allowed(std::path::Path::new("src/main.rs")).is_ok());
@@ -158,8 +158,8 @@ fn test_dir_is_allowed_outside() {
 	assert!(path_env.file_is_allowed(std::path::Path::new("../../not/where/we/are")).is_err());
 	assert!(path_env.file_is_allowed(std::path::Path::new("../../not/where/we/are.json")).is_err());
 
-	assert!(path_env.file_is_allowed(std::path::Path::new("/home/klungo/not/where/we/are")).is_err());
-	assert!(path_env.file_is_allowed(std::path::Path::new("/home/klungo/not/where/we/are.json")).is_err());
+	assert!(path_env.file_is_allowed(std::path::Path::new("/home/blunderbuss/not/where/we/are")).is_err());
+	assert!(path_env.file_is_allowed(std::path::Path::new("/home/blunderbuss/not/where/we/are.json")).is_err());
 }
 
 
