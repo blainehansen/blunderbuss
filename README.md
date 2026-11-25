@@ -1,6 +1,6 @@
 # Blunderbuss
 
-## An LLM coding harness designed as if your safety and cognition actually matter
+## The non-toxic LLM coding harness
 
 > LLMs aren't partners or colleagues or advisors or underlings or any other kind of embodied mind. They're tools, but stochastic and unreliable ones. They're like a [blunderbuss](https://en.wikipedia.org/wiki/Blunderbuss) you pack with nails and glass and hope the scatter hits your target.
 
@@ -212,4 +212,6 @@ fn main() {
 - [ ] Add `allow` and `deny` to task config, to change file-level permissions rather than only using `.gitignore`.
 - [ ] Create eval suite.
 - [ ] Add ability to read web pages at explicitly allowed URLs.
+- [ ] Windows and Mac compatibility.
+- [ ] Other installation paths than `cargo`.
 - [ ] Change `model` to allow a list of models that will be rotated through when rate limits are hit.

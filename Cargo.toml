@@ -1,7 +1,15 @@
 [package]
 name = "blunderbuss"
+description = "The non-toxic LLM coding harness. The major LLM coding harnesses are dark patterns all the way down. Blunderbuss is designed as if your safety and cognition actually matter."
+keywords = []
 version = "0.1.0"
 edition = "2024"
+license-file = "LICENSE"
+homepage = "https://blainehansen.me/post/blunderbuss/"
+repository = "https://github.com/blainehansen/blunderbuss"
+exclude = [
+	"notes.md",
+]
 
 [[bin]]
 name = "blb"
@@ -14,7 +22,7 @@ tokio = { version = "1.53", features = ["full"] }
 
 anyhow = "1.0"
 genai = "0.7"
-http = "*"
+http = "1.5"
 inquire = "0.9"
 schemars = "1.2"
 backon = { version = "1.6", default-features = false, features = ["tokio-sleep"] }

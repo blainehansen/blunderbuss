@@ -13,7 +13,9 @@ pub struct RawParams {
 	pub model: Option<String>,
 	pub maxturns: Option<usize>,
 	pub tools: Option<Vec<String>>,
+	#[allow(dead_code)]
 	pub allow: Option<Vec<PermGlob>>,
+	#[allow(dead_code)]
 	pub disallow: Option<Vec<PermGlob>>,
 	pub check: Option<String>,
 	pub ready: Option<String>,
