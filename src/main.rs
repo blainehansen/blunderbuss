@@ -175,11 +175,12 @@ async fn chat_loop() -> anyhow::Result<()> {
 
 		// execute this turn
 		use backon::Retryable;
+		println!("yo");
 		let chat_res = (|| async { client.exec_chat(&p.model, chat_req.clone(), None).await })
 			.retry(
 				backon::ExponentialBuilder::default()
-					.with_min_delay(std::time::Duration::from_secs(20))
-					.with_max_delay(std::time::Duration::from_secs(120))
+					.with_min_delay(std::time::Duration::from_secs(2))
+					.with_max_delay(std::time::Duration::from_secs(60))
 					.with_max_times(10)
 			)
 			.when(genai_error_is_retryable)
