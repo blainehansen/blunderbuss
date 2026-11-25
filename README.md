@@ -4,7 +4,7 @@
 
 > LLMs aren't partners or colleagues or advisors or underlings or any other kind of embodied mind. They're tools, but stochastic and unreliable ones. They're like a [blunderbuss](https://en.wikipedia.org/wiki/Blunderbuss) you pack with nails and glass and hope the scatter hits your target.
 
-![king k rool with blunderbuss](https://static.wikia.nocookie.net/donkeykong/images/a/a6/Kaptain_k_rool_1.jpg/revision/latest/scale-to-width-down/300?cb=20210112164313)
+![king k rool with blunderbuss](https://blainehansen.me/assets/img/krool-blunderbuss.1ae5aedf.jpg)
 
 Blunderbuss is a coding harness that acknowledges LLMs are dangerous, not just because they often [take unexpected destructive action](https://airisk.mit.edu/ai-incident-tracker/incident-timeline), but because they're cognitively toxic. They [encourage cognitive debt](https://www.mdpi.com/2075-4698/15/1/6), [push you towards mediocrity](https://archive.is/OPObK), [encourage your delusions](https://www.science.org/doi/10.1126/science.aec8352), and [gaslight you when you push back](https://www.hbs.edu/ris/Publication%20Files/26-021_8db29bd1-04ed-4e98-86de-d286721afc7a.pdf).
 

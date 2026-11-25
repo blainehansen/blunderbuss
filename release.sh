@@ -3,7 +3,7 @@
 set -euxo pipefail
 
 # cargo bump {{SEMVER_PORTION}}
-cargo bump {{SEMVER_PORTION}}
+cargo bump patch
 cargo update -p blunderbuss
 
 VERSION=$(grep '^version = "' Cargo.toml)
@@ -13,9 +13,7 @@ echo $VERSION
 GIT_VERSION="v$VERSION"
 echo $GIT_VERSION
 
-docker tag blainehansen/postgres_migrator blainehansen/postgres_migrator:$VERSION
-docker push blainehansen/postgres_migrator:$VERSION
-docker push blainehansen/postgres_migrator:latest
+git add -A
 git commit -am $GIT_VERSION
 git tag $GIT_VERSION
 cargo publish
