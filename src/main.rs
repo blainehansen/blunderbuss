@@ -42,6 +42,9 @@ async fn main() -> anyhow::Result<()> {
 struct ChatParams {
 	model: String,
 	maxturns: usize,
+	min_retry_delay: u64,
+	max_retry_delay: u64,
+	max_retry_times: usize,
 	shell_tools: HashMap<String, tools::ShellTool>,
 	check_command: Option<String>,
 	ready_command: Option<String>,
@@ -51,14 +54,18 @@ struct ChatParams {
 async fn create_new_chat(
 	log_writer: &LogWriter,
 ) -> anyhow::Result<(ChatParams, genai::chat::ChatRequest, genai::Client)> {
-	let UserConfig { default_model, default_maxturns, tools: default_tools, api_keys } = try_blunderbuss_config().await?;
+	let UserConfig {
+		default_model, default_maxturns, default_min_retry_delay, default_max_retry_delay, default_max_retry_times,
+		tools: default_tools, api_keys,
+	} = try_blunderbuss_config().await?;
 	let instructions = tokio::fs::read_to_string("blunderbuss.local.md").await
 		// TODO allow piping stdin at some point
 		.map_err(|e| anyhow::anyhow!("couldn't read the blunderbuss.local.md file, which is the whole way blunderbuss works!: {e}"))?;
 
 	let (
 		parser::RawParams {
-			tools: instruction_tools, model, maxturns, allow: _, disallow: _, check: check_command, ready: ready_command,
+			tools: instruction_tools, model, maxturns, min_retry_delay, max_retry_delay, max_retry_times,
+			allow: _, disallow: _, check: check_command, ready: ready_command,
 		},
 		text,
 	) = parser::parse_instructions(&instructions)
@@ -72,6 +79,19 @@ async fn create_new_chat(
 	let maxturns = maxturns
 		.or(default_maxturns)
 		.unwrap_or(DEFAULT_MAXTURNS);
+
+	const DEFAULT_MAX_TIMES: usize = 10;
+  let max_retry_times = max_retry_times
+  	.or(default_max_retry_times)
+  	.unwrap_or(DEFAULT_MAX_TIMES);
+	const DEFAULT_MIN_DELAY: u64 = 5;
+	let min_retry_delay = min_retry_delay
+		.or(default_min_retry_delay)
+		.unwrap_or(DEFAULT_MIN_DELAY);
+	const DEFAULT_MAX_DELAY: u64 = 60;
+	let max_retry_delay = max_retry_delay
+		.or(default_max_retry_delay)
+		.unwrap_or(DEFAULT_MAX_DELAY);
 
 	// TODO add allow and disallow
 	let path_env = utils::PathEnv::new()?;
@@ -108,6 +128,9 @@ async fn create_new_chat(
 
 	println!("using model {model}");
 	println!("using maxturns {maxturns}");
+	println!("using max_retry_times {max_retry_times}");
+	println!("using min_retry_delay {min_retry_delay}");
+	println!("using max_retry_delay {max_retry_delay}");
 	for shell_tool in shell_tools.keys() {
 		println!("using shell tool: {shell_tool}");
 	}
@@ -134,7 +157,10 @@ async fn create_new_chat(
 		.with_auth_resolver(auth_resolver)
 		.build()?;
 
-	let instructions = ChatParams { model, maxturns, shell_tools, check_command, path_env, ready_command };
+	let instructions = ChatParams {
+		 model, maxturns, max_retry_times, min_retry_delay, max_retry_delay,
+		 shell_tools, check_command, path_env, ready_command,
+	};
 	Ok((instructions, chat_req, client))
 }
 
@@ -142,6 +168,9 @@ async fn create_new_chat(
 struct UserConfig {
 	default_model: Option<String>,
 	default_maxturns: Option<usize>,
+	default_min_retry_delay: Option<u64>,
+	default_max_retry_delay: Option<u64>,
+	default_max_retry_times: Option<usize>,
 	tools: Option<Vec<String>>,
 	api_keys: Option<HashMap<String, String>>,
 }
@@ -175,13 +204,12 @@ async fn chat_loop() -> anyhow::Result<()> {
 
 		// execute this turn
 		use backon::Retryable;
-		println!("yo");
 		let chat_res = (|| async { client.exec_chat(&p.model, chat_req.clone(), None).await })
 			.retry(
 				backon::ExponentialBuilder::default()
-					.with_min_delay(std::time::Duration::from_secs(2))
-					.with_max_delay(std::time::Duration::from_secs(60))
-					.with_max_times(10)
+					.with_min_delay(std::time::Duration::from_secs(p.min_retry_delay))
+					.with_max_delay(std::time::Duration::from_secs(p.max_retry_delay))
+					.with_max_times(p.max_retry_times)
 			)
 			.when(genai_error_is_retryable)
 			.notify(|err, dur| {

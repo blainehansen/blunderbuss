@@ -12,6 +12,9 @@ use nom_language::error::{VerboseError, convert_error};
 pub struct RawParams {
 	pub model: Option<String>,
 	pub maxturns: Option<usize>,
+	pub max_retry_times: Option<usize>,
+	pub min_retry_delay: Option<u64>,
+	pub max_retry_delay: Option<u64>,
 	pub tools: Option<Vec<String>>,
 	#[allow(dead_code)]
 	pub allow: Option<Vec<PermGlob>>,
@@ -102,6 +105,9 @@ fn basic_examples() {
 	assert!(raw_params.allow.is_none());
 	assert!(raw_params.disallow.is_none());
 	assert!(raw_params.maxturns.is_none());
+	assert!(raw_params.max_retry_times.is_none());
+	assert!(raw_params.min_retry_delay.is_none());
+	assert!(raw_params.max_retry_delay.is_none());
 	assert!(raw_params.check.is_none());
 	assert_eq!(body, "");
 
@@ -109,6 +115,9 @@ fn basic_examples() {
 # yaml comment
 maxturns: 5
 # maxturns: 40
+max_retry_times: 5
+min_retry_delay: 5
+max_retry_delay: 10
 model: gemma
 # model: kimi
 tools:
@@ -138,6 +147,9 @@ some: misleading things
 	assert_eq!(raw_params.allow.unwrap(), vec![PermGlob { kind: PermKind::Write, glob: ".env.example".into() }]);
 	assert_eq!(raw_params.disallow.unwrap(), vec![PermGlob { kind: PermKind::Read, glob: "*.env".into() }]);
 	assert_eq!(raw_params.maxturns, Some(5));
+	assert_eq!(raw_params.max_retry_times, Some(5));
+	assert_eq!(raw_params.min_retry_delay, Some(5));
+	assert_eq!(raw_params.max_retry_delay, Some(10));
 	assert_eq!(raw_params.check.as_deref(), Some("cargo check"));
 
 	assert_eq!(body, "So much to do
