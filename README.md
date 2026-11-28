@@ -72,7 +72,7 @@ allow:
 disallow:
 -->
 
-- **`model`:** Specifies the model to use for this task, with a provider specified before the `::`. Full reference for available providers [given at the end of this page](#model-resolution-and-auth). *must be specified either here in user level config*
+- **`model`:** Specifies the model to use for this task, with a provider specified before the `::`. Full reference for available providers [given at the end of this page](#model-resolution-and-auth). *must be specified either here or in user level config*
 - **`tools`:** List of commands to allow `blunderbuss` to use as tools. Both the prefix you give and the suffix given by `blunderbuss` will be *separately* passed through [shlex](https://docs.rs/shlex/latest/shlex/), meaning arbitrary bash constructs can't be used and your prefix can't be modified into any other command (such as could happen if `tree` could be modified to `tree_spy.sh`). Be careful with these tools! Remember that any subcommand of the prefix you pass is now something `blunderbuss` can call!
 - **`check`:** A command that must pass in the exact form specified before the task will be considered successful. `blunderbuss` cannot append any arguments to it, and a new turn will kick off with the failing output if it doesn't pass. It is also made available as a tool `blunderbuss` can call at any time.
 - **`ready`:** A command that will be called once the task has completed successfully. This is not made available as a tool.
@@ -214,7 +214,7 @@ fn main() {
 - [ ] Add "init" behaviors to create configs if they don't exist.
 - [ ] Add `allow` and `deny` to task config, to change file-level permissions rather than only using `.gitignore`.
 - [ ] Create [eval suite](https://hamel.dev/blog/posts/evals-faq/) for security of built-in tools.
-- [ ] Create "short range task" benchmark to determine how small of models can complete manageably sized tasks.
+- [ ] Create "tedium bench" benchmark to see how well different models perform on tasks people would find tedious and uninteresting, partially to find out how small a model can be used for such tasks.
 - [ ] Add ability to read web pages at explicitly allowed URLs.
 - [ ] Windows and Mac compatibility.
 - [ ] Other installation paths than `cargo`.
